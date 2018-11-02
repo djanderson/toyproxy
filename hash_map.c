@@ -190,6 +190,7 @@ int hash_map_del(hash_map_t *map, const char *key)
         last_entry->next = entry->next;
 
     hash_map_entry_destroy(entry);
+    free(entry);
 
     return idx;
 }

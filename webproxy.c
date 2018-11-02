@@ -62,21 +62,10 @@ void test_hash_map()
     hash_map_t map;
     char *ip, *hostname;
     char *hostnames[] = {
-        "google.com",
-        "youtube.com",
-        "facebook.com",
-        "wikipedia.com",
-        "reddit.com",
-        "yahoo.com",
-        "amazon.com",
-        "twitter.com",
-        "instagram.com",
-        "microsoft.com",
-        "bing.com",
-        "office.com",
-        "ebay.com",
-        "msn.com",
-        "spotify.com",
+        "google.com", "youtube.com", "facebook.com", "wikipedia.com",
+        "reddit.com", "yahoo.com", "amazon.com", "twitter.com",
+        "instagram.com", "microsoft.com", "bing.com", "office.com", "ebay.com",
+        "msn.com", "spotify.com",
     };
     struct hostent *host;
 
