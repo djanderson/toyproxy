@@ -92,12 +92,14 @@ void test_hash_map()
         printl(LOG_DEBUG "map[%s]@%d = %s\n", hostname, idx2, ip);
     }
 
-    printl(LOG_DEBUG "\nRemoving hostnames from cache\n");
-    for (int i = 0; i < 15; i++) {
-        hostname = hostnames[i];
-        int idx3 = hash_map_del(&map, hostname);
-        printl(LOG_DEBUG "del map[%s]@%d\n", hostname, idx3);
-    }
+    /*
+     * printl(LOG_DEBUG "\nRemoving hostnames from cache\n");
+     * for (int i = 0; i < 15; i++) {
+     *     hostname = hostnames[i];
+     *     int idx3 = hash_map_del(&map, hostname);
+     *     printl(LOG_DEBUG "del map[%s]@%d\n", hostname, idx3);
+     * }
+     */
 
     hash_map_destroy(&map);
 }

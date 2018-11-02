@@ -72,6 +72,7 @@ void hash_map_destroy(hash_map_t *map)
             do {
                 next = current->next;
                 hash_map_entry_destroy(current);
+                free(current);
                 current = next;
             } while (next != NULL);
         }
