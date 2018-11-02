@@ -1,0 +1,11 @@
+GET / HTTP/1.1
+Host: localhost:8888
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:62.0) Gecko/20100101 Firefox/62.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Cookie: username-localhost-8888="2|1:0|10:1538845388|23:username-localhost-8888|44:NGI4MzY0ZmQ5MDkyNDliZTkwZjI2N2U1ZGJhMDAzOTk=|ba4fc937dac303e3c176cdf0f69113a3c3ed9650b3e563adc6853302065cf780"; username-localhost-8889="2|1:0|10:1537332439|23:username-localhost-8889|44:OWJjOTg0ZDlkMGMyNDc4ODg3YWJkZWIyMDJmNmU4ZDI=|19b041e49a4397ed2697c3314fb0b875a266ab2bc331505ec7983a880a1d713f"; username-localhost-8890="2|1:0|10:1537069174|23:username-localhost-8890|44:YWEwMWM3YjRiODQxNDQxYTgwYjhiMWQ3ZDM0ZDg5ZjI=|cd33fbf8c048474d8a9fb75f30898885be5d1feb96332fe49ad87bcb98c86b6c"
+DNT: 1
+Connection: keep-alive
+Upgrade-Insecure-Requests: 1
+
