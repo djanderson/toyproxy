@@ -500,7 +500,7 @@ void *cache_gc(void *cache_vptr)
     while (!exit_requested) {
         usleep(100000);         /* check exit_requested 10 times a second */
         if (!(clk++ % 10))
-            hashmap_gc(cache);  /* run gc only once a second */
+            hashmap_gc(cache, NULL);  /* run gc only once a second */
     }
 
     printl(LOG_DEBUG "Cache GC exiting\n");

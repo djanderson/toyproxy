@@ -22,6 +22,9 @@ typedef struct hashmap {
     unsigned long timeout;      /* age in secs to delete entry (0 = never) */
 } hashmap_t;
 
+/* Change this function prototype to change hashmap_gc unlinker type. */
+typedef int (*hashmap_gc_unlinker)(const char *);
+
 
 /* Initialize a hash map with the requested bucket size. Return -1 for OOM. */
 int hashmap_init(hashmap_t *map, size_t size);
@@ -41,8 +44,12 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value);
 int hashmap_get(hashmap_t *map, const char *key, char **value);
 /* Return the index where the deleted key was found or -1 for not found. */
 int hashmap_del(hashmap_t *map, const char *key);
-/* Garbage collect entries older then `timeout` seconds old. */
-void hashmap_gc(hashmap_t *map);
+/*
+ * Garbage collect entries older then `timeout` seconds old.
+ *
+ * If `unlinker' is non-NULL, call unlinker(value) on each value being gc'd.
+ */
+void hashmap_gc(hashmap_t *map, hashmap_gc_unlinker unlinker);
 
 
 #endif  /* HASHMAP_H */

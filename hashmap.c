@@ -218,7 +218,7 @@ int hashmap_del(hashmap_t *map, const char *key)
 }
 
 
-void hashmap_gc(hashmap_t *map)
+void hashmap_gc(hashmap_t *map, hashmap_gc_unlinker unlinker)
 {
     assert(map != NULL);
 
@@ -236,6 +236,11 @@ void hashmap_gc(hashmap_t *map)
                 next = current->next;
                 if (now - current->timestamp > timeout) {
                     char *key = current->key;
+                    char *value = current->value;
+                    if (unlinker) {
+                        printl(LOG_DEBUG "Unlinking %s\n", value);
+                        unlinker(value);
+                    }
                     printl(LOG_DEBUG "Removing cache entry %s\n", key);
                     hashmap_del(map, key);
                 }
