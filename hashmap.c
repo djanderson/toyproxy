@@ -1,8 +1,8 @@
 #include <assert.h>             /* assert */
-#include <string.h>             /* strdup */
+#include <string.h>             /* str* */
 #include <time.h>               /* time */
 
-#include "hash_map.h"
+#include "hashmap.h"
 
 
 typedef unsigned long hash_t;
@@ -21,7 +21,7 @@ static inline hash_t hash(unsigned char *str)
 }
 
 
-static inline int hash_map_entry_init(hash_map_entry_t *entry,
+static inline int hashmap_entry_init(hashmap_entry_t *entry,
                                       const char *key, const char *value)
 {
     entry->next = NULL;
@@ -37,7 +37,7 @@ static inline int hash_map_entry_init(hash_map_entry_t *entry,
 }
 
 
-static inline void hash_map_entry_destroy(hash_map_entry_t *entry)
+static inline void hashmap_entry_destroy(hashmap_entry_t *entry)
 {
     assert(entry->key != NULL);
     free(entry->key);
@@ -47,31 +47,35 @@ static inline void hash_map_entry_destroy(hash_map_entry_t *entry)
 }
 
 
-int hash_map_init(hash_map_t *map, size_t size)
+int hashmap_init(hashmap_t *map, size_t size)
 {
-    map->bucket = calloc(size, sizeof(hash_map_entry_t *));
+    map->bucket = calloc(size, sizeof(hashmap_entry_t *));
     map->size = size;
 
     if (map->bucket == NULL)    /* out of memory */
+        return -1;
+
+    if (pthread_mutex_init(&map->lock, NULL)) /*  */
         return -1;
 
     return 0;
 }
 
 
-void hash_map_destroy(hash_map_t *map)
+void hashmap_destroy(hashmap_t *map)
 {
-    hash_map_entry_t *current, *next;
+    hashmap_entry_t *current, *next;
 
     if (map == NULL || map->bucket == NULL)
         return;
 
+    /* free entries */
     for (size_t i = 0; i < map->size; i++) {
         if (map->bucket[i] != NULL) {
             current = map->bucket[i];
             do {
                 next = current->next;
-                hash_map_entry_destroy(current);
+                hashmap_entry_destroy(current);
                 free(current);
                 current = next;
             } while (next != NULL);
@@ -79,21 +83,25 @@ void hash_map_destroy(hash_map_t *map)
     }
 
     free(map->bucket);
+    pthread_mutex_destroy(&map->lock);
 }
 
 
-int hash_map_add(hash_map_t *map, const char *key, const char *value)
+int hashmap_add(hashmap_t *map, const char *key, const char *value)
 {
     assert(map != NULL);
     assert(key != NULL);
     assert(value != NULL);
 
+    int rval = -1;
     bool entry_exists = false;
-    hash_map_entry_t *last_entry, *entry;
+    hashmap_entry_t *last_entry, *entry;
     hash_t key_hash = hash((unsigned char *) key);
     int idx = key_hash % map->size;
 
     last_entry = entry = map->bucket[idx];
+
+    pthread_mutex_lock(&map->lock);
 
     /* Look through existing entries to see if key is already added */
     while (entry != NULL) {
@@ -108,36 +116,39 @@ int hash_map_add(hash_map_t *map, const char *key, const char *value)
 
     if (entry_exists) {
         entry->timestamp = time(NULL);
-        return idx;
+        rval = idx;
+    } else {
+        /* Add new entry */
+        entry = malloc(sizeof(hashmap_entry_t));
+        if (entry != NULL) {
+            hashmap_entry_init(entry, key, value);
+            if (last_entry == NULL)
+                map->bucket[idx] = entry; /* add new entry at head of list */
+            else
+                last_entry->next = entry; /* add new entry at tail of list */
+        }
     }
 
-    /* Add new entry */
-    entry = malloc(sizeof(hash_map_entry_t));
-    if (entry == NULL)          /* out of memory */
-        return -1;
+    pthread_mutex_unlock(&map->lock);
 
-    hash_map_entry_init(entry, key, value);
-
-    if (last_entry == NULL)
-        map->bucket[idx] = entry; /* add new entry at head of list */
-    else
-        last_entry->next = entry; /* add new entry at tail of list */
-
-    return idx;
+    return rval;
 }
 
 
-int hash_map_get(hash_map_t *map, const char *key, char **value)
+int hashmap_get(hashmap_t *map, const char *key, char **value)
 {
     assert(map != NULL);
     assert(key != NULL);
 
+    int rval = -1;
     bool entry_exists = false;
-    hash_map_entry_t *entry;
+    hashmap_entry_t *entry;
     hash_t key_hash = hash((unsigned char *) key);
     int idx = key_hash % map->size;
 
     entry = map->bucket[idx];
+
+    pthread_mutex_lock(&map->lock);
 
     while (entry != NULL) {
         if (entry->is_valid && !strcmp(key, entry->key)) {
@@ -151,24 +162,29 @@ int hash_map_get(hash_map_t *map, const char *key, char **value)
     if (entry_exists) {
         *value = entry->value;
         entry->timestamp = time(NULL);
-        return idx;
+        rval = idx;
     }
 
-    return -1;
+    pthread_mutex_unlock(&map->lock);
+
+    return rval;
 }
 
 
-int hash_map_del(hash_map_t *map, const char *key)
+int hashmap_del(hashmap_t *map, const char *key)
 {
     assert(map != NULL);
     assert(key != NULL);
 
+    int rval = -1;
     bool entry_exists = false;
-    hash_map_entry_t *last_entry, *entry;
+    hashmap_entry_t *last_entry, *entry;
     hash_t key_hash = hash((unsigned char *) key);
     int idx = key_hash % map->size;
 
     last_entry = entry = map->bucket[idx];
+
+    pthread_mutex_lock(&map->lock);
 
     while (entry != NULL) {
         if (entry->is_valid && !strcmp(key, entry->key)) {
@@ -180,18 +196,21 @@ int hash_map_del(hash_map_t *map, const char *key)
         entry = entry->next;
     }
 
-    if (!entry_exists)
-        return -1;
+    if (entry_exists) {
+        if (entry == map->bucket[idx])
+            /* replace head of linked list */
+            map->bucket[idx] = entry->next;
+        else
+            /* replace non-head entry */
+            last_entry->next = entry->next;
 
-    if (entry == map->bucket[idx])
-        /* replace head of linked list */
-        map->bucket[idx] = entry->next;
-    else
-        /* replace non-head entry */
-        last_entry->next = entry->next;
+        hashmap_entry_destroy(entry);
+        free(entry);
 
-    hash_map_entry_destroy(entry);
-    free(entry);
+        rval = idx;
+    }
 
-    return idx;
+    pthread_mutex_unlock(&map->lock);
+
+    return rval;
 }

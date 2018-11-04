@@ -14,7 +14,7 @@
 #include <unistd.h>             /* close, read, write */
 
 #include "connectionq.h"
-#include "hash_map.h"
+#include "hashmap.h"
 #include "printl.h"
 #include "request.h"
 #include "response.h"
@@ -41,73 +41,28 @@ static void signal_handler(int __attribute__((__unused__)) sig)
     exit_requested = true;
 }
 
+
 /* Parse command line options. */
 void parse_options(int argc, char *argv[], int *port);
 /* Setup the listener socket. */
 int initialize_listener(struct sockaddr_in *saddr, int *fd);
 /* Watch for incoming socket connections and place on queue. */
-int serve(struct connectionq *q, int ssock);
+int proxy(struct connectionq *q, int ssock);
 /* Consume connections from the queue. */
 void *worker(void *queue);
 /* Handle a single connection until connection close or keep-alive timeout. */
 void handle_connection(int fd, struct sockaddr_in *peer_addr);
 /* Send an HTTP error response (no body). */
-int send_error(struct request *req, int status);
+int send_error(request_t *req, int status);
 /* Send an HTTP response including the file at `path'. */
-int send_file(struct request *req, char *path);
+int send_file(request_t *req, char *path);
 
-
-void test_hash_map()
-{
-    hash_map_t map;
-    char *ip, *hostname;
-    char *hostnames[] = {
-        "google.com", "youtube.com", "facebook.com", "wikipedia.com",
-        "reddit.com", "yahoo.com", "amazon.com", "twitter.com",
-        "instagram.com", "microsoft.com", "bing.com", "office.com", "ebay.com",
-        "msn.com", "spotify.com",
-    };
-    struct hostent *host;
-
-    hash_map_init(&map, 10);
-
-    printl(LOG_DEBUG "\nAdding hostnames to cache\n");
-    for (int i = 0; i < 15; i++) {
-        hostname = hostnames[i];
-        host = gethostbyname(hostname);
-        if (host == NULL) {
-            herror("gethostbyname");
-            continue;
-        }
-
-        ip = inet_ntoa(*(struct in_addr *) host->h_addr);
-        int idx1 = hash_map_add(&map, hostname, ip);
-        printl(LOG_DEBUG "map[%s]@%d = %s\n", hostname, idx1, ip);
-    }
-
-    printl(LOG_DEBUG "\nReading hostnames from cache\n");
-    for (int i = 0; i < 15; i++) {
-        hostname = hostnames[i];
-        int idx2 = hash_map_get(&map, hostname, &ip);
-        printl(LOG_DEBUG "map[%s]@%d = %s\n", hostname, idx2, ip);
-    }
-
-    /*
-     * printl(LOG_DEBUG "\nRemoving hostnames from cache\n");
-     * for (int i = 0; i < 15; i++) {
-     *     hostname = hostnames[i];
-     *     int idx3 = hash_map_del(&map, hostname);
-     *     printl(LOG_DEBUG "del map[%s]@%d\n", hostname, idx3);
-     * }
-     */
-
-    hash_map_destroy(&map);
-}
 
 int main(int argc, char *argv[])
 {
     int rval, ssock, port;
     pthread_t threads[MAX_THREADS];
+    sigset_t set;
     struct sockaddr_in addr;
     struct connectionq q;
     int nthreads = sysconf(_SC_NPROCESSORS_CONF);
@@ -115,16 +70,17 @@ int main(int argc, char *argv[])
     if (nthreads > MAX_THREADS)
         nthreads = MAX_THREADS;
 
-    printl_setlevel(DEBUG);
-
-    test_hash_map();
+    printl_setlevel(INFO);
 
     parse_options(argc, argv, &port);
 
     signal(SIGINT, signal_handler);
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
 
-    /* Initialize connection queue */
     connectionq_init(&q, nthreads);
+    hashmap_init(&hostname_cache, 100);
 
     /* Spawn worker thread pool */
     printl(LOG_DEBUG "Initializing %d worker threads\n", nthreads);
@@ -135,6 +91,8 @@ int main(int argc, char *argv[])
             return errno;
         }
     }
+
+    pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -148,7 +106,7 @@ int main(int argc, char *argv[])
 
     /* Serve until terminated */
     printl(LOG_INFO "Webproxy started on port %d\n", port);
-    rval = serve(&q, ssock);
+    rval = proxy(&q, ssock);
 
     /* Unblock waiting threads */
     for (int i = 0; i < nthreads; i++)
@@ -166,7 +124,7 @@ int main(int argc, char *argv[])
 }
 
 
-int serve(struct connectionq *q, int ssock)
+int proxy(struct connectionq *q, int ssock)
 {
     int rval, fd, ready, on = 1;
     struct sockaddr_in caddr;
@@ -189,7 +147,7 @@ int serve(struct connectionq *q, int ssock)
         } else if (ready) {
             fd = accept(ssock, (struct sockaddr *)&caddr, &addr_sz);
             if (fd < 0) {
-                 printl(LOG_ERR "accept - %s\n", strerror(errno));
+                printl(LOG_ERR "accept - %s\n", strerror(errno));
                 break;
             }
 
@@ -249,11 +207,10 @@ void *worker(void *queue)
  */
 inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
 {
-    struct request req = {0};
+    request_t req = {0};
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
-    int timer;
     fd_set readfds_master, readfds;
-    int nrecv, nrecvd, nunparsed, ready;
+    int rval, nrecv, nrecvd, nunparsed, timer, ready;
     bool keepalive;
     char reqbuf[REQ_BUFLEN] = "";
     char requested_file_path[REQ_BUFLEN] = "";
@@ -277,8 +234,10 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
                 continue;
             }
             nrecv = REQ_BUFLEN - nunparsed;
-            if (req.complete)
+            if (req.complete) {
+                printl(LOG_DEBUG "Request complete\n");
                 break;
+            }
         }
 
         if (nrecvd <= 0) {
@@ -292,17 +251,28 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
         }
 
         assert(req.complete);
+
         keepalive = request_conn_is_keepalive(&req);
+
+        rval = request_lookup_host(&req);
+        if (rval == -1) {
+            send_error(&req, 404);
+            break;
+        }
+
         printl(LOG_INFO "(%d) %s %s %s\n", fd, req.ip, req.method,
-               req.uri);
+               req.url->full);
 
         strcpy(requested_file_path, PROXY_ROOT);
 
         if (request_method_is_get(&req)) {
-            if (send_file(&req, requested_file_path) < 0)
+            if (send_file(&req, requested_file_path) < 0) {
                 send_error(&req, 404);
+                break;
+            }
         } else {
             send_error(&req, 405);
+            break;
         }
 
         while (keepalive) {
@@ -331,9 +301,9 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
 
 
 /* Return total bytes sent or -1. */
-int send_file(struct request *req, char *path)
+int send_file(request_t *req, char *path)
 {
-    struct response res;
+    response_t res;
     char buf[RES_BUFLEN] = "";
     size_t buflen, clen;
     FILE *file;
@@ -341,16 +311,10 @@ int send_file(struct request *req, char *path)
     const char *ctype;
     int ntotal = 0, nsend, nsent;
 
-    /* Don't allow client to read above server root */
-    if (strstr(path, "/../") != NULL) {
-        printl(LOG_DEBUG "Invalid uri path includes `/../'\n");
-        return -1;
-    }
-
-    if (request_uri_is_root(req))
+    if (request_path_is_root(req))
         strcat(path, "/index.html");
     else
-        strcat(path, req->uri);
+        strcat(path, req->url->path);
 
     if ((file = fopen(path, "rb")) == NULL) {
         printl(LOG_DEBUG "Failed to open %s - %s\n", path, strerror(errno));
@@ -402,9 +366,9 @@ int send_file(struct request *req, char *path)
 }
 
 
-int send_error(struct request *req, int status)
+int send_error(request_t *req, int status)
 {
-    struct response res;
+    response_t res;
     char buf[RES_BUFLEN] = "";
     int nsent, buflen;
 

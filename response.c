@@ -22,7 +22,7 @@ const char response_server_error_500[] = "500 Internal Server Error";
 const char error_500[] = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
 
 
-size_t response_serialize(struct response *res, char *buf, size_t buflen)
+size_t response_serialize(response_t *res, char *buf, size_t buflen)
 {
     size_t nbytes = 0;
 
@@ -73,7 +73,7 @@ size_t response_serialize(struct response *res, char *buf, size_t buflen)
 }
 
 
-void response_init(struct request *req, struct response *res, int status,
+void response_init(request_t *req, response_t *res, int status,
                    const char *ctype, size_t clen)
 {
     const int field_len = 100;
@@ -117,7 +117,7 @@ void response_init(struct request *req, struct response *res, int status,
 }
 
 
-void response_destroy(struct response *res)
+void response_destroy(response_t *res)
 {
     if (res->status_line)
         free(res->status_line);

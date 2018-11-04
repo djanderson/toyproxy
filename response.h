@@ -7,20 +7,20 @@
 
 #define RES_BUFLEN 8000
 
-struct response {
+typedef struct response {
     char *status_line;
     char *server;
     char *date;
     char *content_type;
     char *content_length;
     char *connection;
-};
+} response_t;
 
-void response_init(struct request *req, struct response *res, int status,
+void response_init(request_t *req, response_t *res, int status,
                    const char *ctype, size_t clen);
-void response_destroy(struct response *res);
+void response_destroy(response_t *res);
 /* Serialize the response or 500 response if `buf' too small. */
-size_t response_serialize(struct response *res, char *buf, size_t buflen);
+size_t response_serialize(response_t *res, char *buf, size_t buflen);
 /*
  * Copy at most buflen chars of string describing status into buf.
  *
