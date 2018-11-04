@@ -115,7 +115,7 @@ int main(int argc, char *argv[])
         connectionq_signal_available(&q);
 
     /* Wait for worker threads to exit */
-    printl(LOG_INFO "Waiting for workers to exit...\n");
+    printl(LOG_INFO "Exiting...\n");
     for (int i = 0; i < nthreads; i++)
         pthread_join(threads[i], NULL);
 
