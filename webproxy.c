@@ -88,6 +88,7 @@ int main(int argc, char *argv[])
         if (pthread_create(&threads[i], NULL,  worker, (void *)&q) < 0) {
             printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
             connectionq_destroy(&q);
+            hashmap_destroy(&hostname_cache);
             return errno;
         }
     }
@@ -101,6 +102,7 @@ int main(int argc, char *argv[])
 
     if ((rval = initialize_listener(&addr, &ssock) < 0)) {
         connectionq_destroy(&q);
+        hashmap_destroy(&hostname_cache);
         return rval;
     }
 
@@ -118,6 +120,7 @@ int main(int argc, char *argv[])
         pthread_join(threads[i], NULL);
 
     connectionq_destroy(&q);
+    hashmap_destroy(&hostname_cache);
     close(ssock);
 
     return rval;
