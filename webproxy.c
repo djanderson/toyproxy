@@ -22,11 +22,12 @@
 #define PROXY_ROOT "www"
 #define MAX_THREADS 15
 #define MAX_BACKLOG 100         /* Max connections before ECONNREFUSED error */
-#define TIMEOUT 10              /* Keep-alive timeout in seconds */
+#define KEEPALIVE_TIMEOUT_S 10
+#define DEFAULT_CACHE_TIMEOUT_S 60
 
 
 /* Command line options */
-const char usage[] = "USAGE: %s [-h] <port>\n";
+const char usage[] = "USAGE: %s [-h] port [cache timeout (secs)]\n";
 const char shortopts[] = "hd";
 const struct option longopts[] = {
     {"help", no_argument, 0, 'h'},
@@ -43,7 +44,7 @@ static void signal_handler(int __attribute__((__unused__)) sig)
 
 
 /* Parse command line options. */
-void parse_options(int argc, char *argv[], int *port);
+void parse_options(int argc, char *argv[], int *port, int *cache_timeout);
 /* Setup the listener socket. */
 int initialize_listener(struct sockaddr_in *saddr, int *fd);
 /* Watch for incoming socket connections and place on queue. */
@@ -56,11 +57,14 @@ void handle_connection(int fd, struct sockaddr_in *peer_addr);
 int send_error(request_t *req, int status);
 /* Send an HTTP response including the file at `path'. */
 int send_file(request_t *req, char *path);
+/* Handle cache timeout. */
+void *cache_gc(void *cache_vptr);
 
 
 int main(int argc, char *argv[])
 {
-    int rval, ssock, port;
+    int rval, ssock, port, cache_timeout;
+    pthread_t cache_gc_thread;
     pthread_t threads[MAX_THREADS];
     sigset_t set;
     struct sockaddr_in addr;
@@ -72,7 +76,7 @@ int main(int argc, char *argv[])
 
     printl_setlevel(INFO);
 
-    parse_options(argc, argv, &port);
+    parse_options(argc, argv, &port, &cache_timeout);
 
     signal(SIGINT, signal_handler);
     sigemptyset(&set);
@@ -81,6 +85,15 @@ int main(int argc, char *argv[])
 
     connectionq_init(&q, nthreads);
     hashmap_init(&hostname_cache, 100);
+    hostname_cache.timeout = cache_timeout; /* XXX */
+
+    /* Spawn cache timeout handler */
+    if (pthread_create(&cache_gc_thread, NULL, cache_gc, (void *)&hostname_cache) < 0) {
+        printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
+        connectionq_destroy(&q);
+        hashmap_destroy(&hostname_cache);
+        return errno;
+    }
 
     /* Spawn worker thread pool */
     printl(LOG_DEBUG "Initializing %d worker threads\n", nthreads);
@@ -116,6 +129,7 @@ int main(int argc, char *argv[])
 
     /* Wait for worker threads to exit */
     printl(LOG_INFO "Exiting...\n");
+    pthread_join(cache_gc_thread, NULL);
     for (int i = 0; i < nthreads; i++)
         pthread_join(threads[i], NULL);
 
@@ -184,7 +198,7 @@ void *worker(void *queue)
         printl(LOG_DEBUG "Thread %u waiting for connections\n", thread_id);
         connectionq_wait_if_empty(q);
         if (exit_requested) {
-            printl(LOG_DEBUG "Thread %u terminated\n", thread_id);
+            printl(LOG_DEBUG "Worker thread %u terminated\n", thread_id);
             break;
         }
 
@@ -199,7 +213,7 @@ void *worker(void *queue)
         close(fd);
     }
 
-    printl(LOG_DEBUG "Exiting worker thread %u\n", thread_id);
+    printl(LOG_DEBUG "Worker thread %u exiting\n", thread_id);
     pthread_exit(NULL);
 }
 
@@ -218,7 +232,7 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
     char reqbuf[REQ_BUFLEN] = "";
     char requested_file_path[REQ_BUFLEN] = "";
 
-    /* If keep-alive requested, watch fd for TIMEOUT seconds */
+    /* If keep-alive requested, watch fd for KEEPALIVE_TIMEOUT_S seconds */
     FD_ZERO(&readfds_master);
     FD_SET(fd, &readfds_master);
 
@@ -290,7 +304,7 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
                 printl(LOG_DEBUG "Reusing keep-alive socket %d\n", fd);
                 break;
             } else {
-                if (++timer > TIMEOUT) {
+                if (++timer > KEEPALIVE_TIMEOUT_S) {
                     printl(LOG_DEBUG "Closing keep-alive socket %d\n", fd);
                     keepalive = false;
                 }
@@ -420,10 +434,10 @@ int initialize_listener(struct sockaddr_in *saddr, int *fd)
 }
 
 
-void parse_options(int argc, char *argv[], int *port)
+void parse_options(int argc, char *argv[], int *port, int *cache_timeout)
 {
     int c;
-    char *portstr;
+    char *portstr, *timeoutstr;
 
     /* Parse cmdline options */
     while ((c = getopt_long(argc, argv, shortopts, longopts, 0)) != -1) {
@@ -445,7 +459,7 @@ void parse_options(int argc, char *argv[], int *port)
     }
 
     int n_posargs = argc - optind;
-    if (n_posargs != 1) {
+    if (!n_posargs || n_posargs > 2) {
         printf(usage, argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -453,9 +467,43 @@ void parse_options(int argc, char *argv[], int *port)
     /* Check port */
     portstr = argv[optind++];
     *port = atoi(portstr);
-    if (!*port) {
-        printl(LOG_FATAL "Invalid port `%s'\n", *portstr);
+    if (*port < 1) {
+        printl(LOG_FATAL "Invalid port `%s'\n", portstr);
         printf(usage, argv[0]);
         exit(EXIT_FAILURE);
     }
+
+    if (n_posargs == 1) {
+        *cache_timeout = DEFAULT_CACHE_TIMEOUT_S;
+    } else {
+        /* Check timeout */
+        timeoutstr = argv[optind++];
+        *cache_timeout = atoi(timeoutstr);
+        if (*cache_timeout < 1) {
+            printl(LOG_FATAL "Invalid cache timeout `%s'\n", timeoutstr);
+            printf(usage, argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    printl(LOG_DEBUG "Cache timeout set to %d seconds\n", *cache_timeout);
+}
+
+
+void *cache_gc(void *cache_vptr)
+{
+    hashmap_t *cache = (hashmap_t *) cache_vptr;
+    unsigned int clk = 0;
+
+    printl(LOG_DEBUG "Cache GC running\n");
+
+    while (!exit_requested) {
+        usleep(100000);         /* check exit_requested 10 times a second */
+        if (!(clk++ % 10))
+            hashmap_gc(cache);  /* run gc only once a second */
+    }
+
+    printl(LOG_DEBUG "Cache GC exiting\n");
+
+    pthread_exit(NULL);
 }

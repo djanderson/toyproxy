@@ -3,6 +3,7 @@
 #include <time.h>               /* time */
 
 #include "hashmap.h"
+#include "printl.h"
 
 
 typedef unsigned long hash_t;
@@ -22,13 +23,12 @@ static inline hash_t hash(unsigned char *str)
 
 
 static inline int hashmap_entry_init(hashmap_entry_t *entry,
-                                      const char *key, const char *value)
+                                     const char *key, const char *value)
 {
     entry->next = NULL;
     entry->key = strdup(key);
     entry->value = strdup(value);
     entry->timestamp = time(NULL);
-    entry->is_valid = true;
 
     if (entry->key == NULL || entry->value == NULL) /* out of memory */
         return -1;
@@ -49,13 +49,15 @@ static inline void hashmap_entry_destroy(hashmap_entry_t *entry)
 
 int hashmap_init(hashmap_t *map, size_t size)
 {
+    pthread_mutexattr_t mutexattr;
     map->bucket = calloc(size, sizeof(hashmap_entry_t *));
     map->size = size;
 
     if (map->bucket == NULL)    /* out of memory */
         return -1;
 
-    if (pthread_mutex_init(&map->lock, NULL)) /*  */
+    pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_RECURSIVE);
+    if (pthread_mutex_init(&map->lock, &mutexattr))
         return -1;
 
     return 0;
@@ -105,7 +107,7 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
 
     /* Look through existing entries to see if key is already added */
     while (entry != NULL) {
-        if (entry->is_valid && !strcmp(key, entry->key)) {
+        if (!strcmp(key, entry->key)) {
             entry_exists = true;
             break;
         }
@@ -151,7 +153,7 @@ int hashmap_get(hashmap_t *map, const char *key, char **value)
     pthread_mutex_lock(&map->lock);
 
     while (entry != NULL) {
-        if (entry->is_valid && !strcmp(key, entry->key)) {
+        if (!strcmp(key, entry->key)) {
             entry_exists = true;
             break;
         }
@@ -187,7 +189,7 @@ int hashmap_del(hashmap_t *map, const char *key)
     pthread_mutex_lock(&map->lock);
 
     while (entry != NULL) {
-        if (entry->is_valid && !strcmp(key, entry->key)) {
+        if (!strcmp(key, entry->key)) {
             entry_exists = true;
             break;
         }
@@ -213,4 +215,34 @@ int hashmap_del(hashmap_t *map, const char *key)
     pthread_mutex_unlock(&map->lock);
 
     return rval;
+}
+
+
+void hashmap_gc(hashmap_t *map)
+{
+    assert(map != NULL);
+
+    hashmap_entry_t *current, *next;
+    unsigned long timeout, now = time(NULL);
+
+    pthread_mutex_lock(&map->lock);
+
+    timeout = map->timeout;
+
+    for (size_t i = 0; i < map->size; i++) {
+        if (map->bucket[i] != NULL) {
+            current = map->bucket[i];
+            do {
+                next = current->next;
+                if (now - current->timestamp > timeout) {
+                    char *key = current->key;
+                    printl(LOG_DEBUG "Removing cache entry %s\n", key);
+                    hashmap_del(map, key);
+                }
+                current = next;
+            } while (next != NULL);
+        }
+    }
+
+    pthread_mutex_unlock(&map->lock);
 }

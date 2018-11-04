@@ -9,17 +9,17 @@
 /* A string-string hash map entry. */
 typedef struct hashmap_entry {
     struct hashmap_entry *next; /* pointer to next entry in linked list */
-    char *key;                   /* the key that was hashed */
-    char *value;                 /* the mapped value */
-    unsigned long timestamp;     /* optional timestamp for cache expiration */
-    bool is_valid;               /* flag that marks the entry valid */
+    char *key;                  /* the key that was hashed */
+    char *value;                /* the mapped value */
+    unsigned long timestamp;    /* timestamp for cache expiration */
 } hashmap_entry_t;
 
 
 typedef struct hashmap {
     hashmap_entry_t **bucket;   /* the hash map's array */
-    size_t size;                 /* size of the array */
-    pthread_mutex_t lock;        /* map lock for multithreading support */
+    size_t size;                /* size of the array */
+    pthread_mutex_t lock;       /* map lock for multithreading support */
+    unsigned long timeout;      /* age in secs to delete entry (0 = never) */
 } hashmap_t;
 
 
@@ -41,6 +41,8 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value);
 int hashmap_get(hashmap_t *map, const char *key, char **value);
 /* Return the index where the deleted key was found or -1 for not found. */
 int hashmap_del(hashmap_t *map, const char *key);
+/* Garbage collect entries older then `timeout` seconds old. */
+void hashmap_gc(hashmap_t *map);
 
 
 #endif  /* HASHMAP_H */
