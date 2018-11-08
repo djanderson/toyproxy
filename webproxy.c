@@ -6,6 +6,7 @@
 #include <netinet/tcp.h>        /* TCP_NODELAY */
 #include <pthread.h>            /* pthread_* */
 #include <signal.h>             /* sigset_t, sigaction */
+#include <stdatomic.h>          /* atomic_ */
 #include <stdlib.h>             /* size_t */
 #include <string.h>             /* memset */
 #include <stdio.h>              /* printf, fprintf */
@@ -35,7 +36,7 @@ const struct option longopts[] = {
     {"debug", no_argument, 0, 'd'}
 };
 
-static volatile bool exit_requested = false;
+atomic_bool exit_requested = false;
 
 queue_t requestq;
 
