@@ -8,7 +8,7 @@
 #include "request.h"
 
 
-typedef request_t *queue_type_t;
+typedef request_t queue_type_t;
 
 typedef struct queue {
     size_t buffer_size;         /* max number elements buffer can hold */
