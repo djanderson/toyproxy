@@ -49,6 +49,7 @@ static inline void hashmap_entry_destroy(hashmap_entry_t *entry)
 
 int hashmap_init(hashmap_t *map, size_t size)
 {
+    int rval = 0;
     pthread_mutexattr_t mutexattr;
     map->bucket = calloc(size, sizeof(hashmap_entry_t *));
     map->size = size;
@@ -56,11 +57,14 @@ int hashmap_init(hashmap_t *map, size_t size)
     if (map->bucket == NULL)    /* out of memory */
         return -1;
 
+    pthread_mutexattr_init(&mutexattr);
     pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_RECURSIVE);
     if (pthread_mutex_init(&map->lock, &mutexattr))
-        return -1;
+        rval = -1;
 
-    return 0;
+    pthread_mutexattr_destroy(&mutexattr);
+
+    return rval;
 }
 
 
