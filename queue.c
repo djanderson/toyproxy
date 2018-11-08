@@ -1,38 +1,38 @@
 #include <assert.h>             /* assert */
 
-#include "connectionq.h"
+#include "queue.h"
 
 
-void connectionq_put(struct connectionq *q, int sock)
+void queue_put(queue_t *q, queue_type_t item)
 {
-    connectionq_wait_if_full(q);
+    queue_wait_if_full(q);
     pthread_mutex_lock(&q->lock);
-    q->buffer[q->in_idx] = sock;
+    q->buffer[q->in_idx] = item;
     q->in_idx = (q->in_idx + 1) % q->buffer_size;
     q->size++;
     pthread_mutex_unlock(&q->lock);
-    connectionq_signal_available(q);
+    queue_signal_available(q);
     assert(q->size <= q->buffer_size);
 }
 
 
-int connectionq_get(struct connectionq *q)
+queue_type_t queue_get(queue_t *q)
 {
-    int sock;
+    queue_type_t item;
 
     assert(q->size > 0);
     pthread_mutex_lock(&q->lock);
-    sock = q->buffer[q->out_idx];
+    item = q->buffer[q->out_idx];
     q->out_idx = (q->out_idx + 1) % q->buffer_size;
     q->size--;
     pthread_mutex_unlock(&q->lock);
-    connectionq_signal_consumed(q);
+    queue_signal_consumed(q);
 
     return sock;
 }
 
 
-void connectionq_init(struct connectionq *q, size_t qsize)
+void queue_init(queue_t *q, size_t qsize)
 {
     q->buffer_size = qsize;
     q->size = 0;
@@ -49,7 +49,7 @@ void connectionq_init(struct connectionq *q, size_t qsize)
 }
 
 
-void connectionq_destroy(struct connectionq *q)
+void queue_destroy(queue_t *q)
 {
     sem_destroy(&q->full);
     sem_destroy(&q->empty);

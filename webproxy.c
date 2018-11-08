@@ -13,15 +13,16 @@
 #include <sys/stat.h>           /* stat, struct st */
 #include <unistd.h>             /* close, read, write */
 
-#include "connectionq.h"
+#include "queue.h"
 #include "hashmap.h"
 #include "printl.h"
 #include "request.h"
 #include "response.h"
 
 #define PROXY_ROOT "www"
-#define MAX_THREADS 15
+#define MAX_THREADS 15          /* Max request handler threads */
 #define MAX_BACKLOG 100         /* Max connections before ECONNREFUSED error */
+#define MAX_REQUESTS 100        /* Request queue size */
 #define KEEPALIVE_TIMEOUT_S 10
 #define DEFAULT_CACHE_TIMEOUT_S 60
 
@@ -36,6 +37,8 @@ const struct option longopts[] = {
 
 static volatile bool exit_requested = false;
 
+queue_t requestq;
+
 
 static void signal_handler(int __attribute__((__unused__)) sig)
 {
@@ -47,12 +50,12 @@ static void signal_handler(int __attribute__((__unused__)) sig)
 void parse_options(int argc, char *argv[], int *port, int *cache_timeout);
 /* Setup the listener socket. */
 int initialize_listener(struct sockaddr_in *saddr, int *fd);
-/* Watch for incoming socket connections and place on queue. */
-int proxy(struct connectionq *q, int ssock);
-/* Consume connections from the queue. */
-void *worker(void *queue);
+/* Watch for incoming socket connections and spawn connection handler. */
+int proxy(int ssock);
 /* Handle a single connection until connection close or keep-alive timeout. */
-void handle_connection(int fd, struct sockaddr_in *peer_addr);
+void *handle_connection(void *fd_vptr);
+/* Consume requests from the queue. */
+void *handle_request(void *queue_vptr);
 /* Send an HTTP error response (no body). */
 int send_error(request_t *req, int status);
 /* Send an HTTP response including the file at `path'. */
@@ -68,7 +71,6 @@ int main(int argc, char *argv[])
     pthread_t threads[MAX_THREADS];
     sigset_t set;
     struct sockaddr_in addr;
-    struct connectionq q;
     int nthreads = sysconf(_SC_NPROCESSORS_CONF);
 
     if (nthreads > MAX_THREADS)
@@ -83,24 +85,25 @@ int main(int argc, char *argv[])
     sigaddset(&set, SIGINT);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
 
-    connectionq_init(&q, nthreads);
+    queue_init(&requestq, MAX_REQUESTS);
     hashmap_init(&hostname_cache, 100);
     hostname_cache.timeout = cache_timeout; /* XXX */
 
     /* Spawn cache timeout handler */
-    if (pthread_create(&cache_gc_thread, NULL, cache_gc, (void *)&hostname_cache) < 0) {
+    if (pthread_create(&cache_gc_thread, NULL, cache_gc,
+                       (void *)&hostname_cache) < 0) {
         printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
-        connectionq_destroy(&q);
+        queue_destroy(&requestq);
         hashmap_destroy(&hostname_cache);
         return errno;
     }
 
-    /* Spawn worker thread pool */
+    /* Spawn request handler thread pool */
     printl(LOG_DEBUG "Initializing %d worker threads\n", nthreads);
     for (int i = 0; i < nthreads; i++) {
-        if (pthread_create(&threads[i], NULL,  worker, (void *)&q) < 0) {
+        if (pthread_create(&threads[i], NULL,  handle_request, NULL) < 0) {
             printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
-            connectionq_destroy(&q);
+            queue_destroy(&requestq);
             hashmap_destroy(&hostname_cache);
             return errno;
         }
@@ -114,18 +117,18 @@ int main(int argc, char *argv[])
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if ((rval = initialize_listener(&addr, &ssock) < 0)) {
-        connectionq_destroy(&q);
+        queue_destroy(&requestq);
         hashmap_destroy(&hostname_cache);
         return rval;
     }
 
     /* Serve until terminated */
     printl(LOG_INFO "Webproxy started on port %d\n", port);
-    rval = proxy(&q, ssock);
+    rval = proxy(ssock);
 
     /* Unblock waiting threads */
     for (int i = 0; i < nthreads; i++)
-        connectionq_signal_available(&q);
+        queue_signal_available(&requestq);
 
     /* Wait for worker threads to exit */
     printl(LOG_INFO "Exiting...\n");
@@ -133,7 +136,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < nthreads; i++)
         pthread_join(threads[i], NULL);
 
-    connectionq_destroy(&q);
+    queue_destroy(&requestq);
     hashmap_destroy(&hostname_cache);
     close(ssock);
 
@@ -141,7 +144,7 @@ int main(int argc, char *argv[])
 }
 
 
-int proxy(struct connectionq *q, int ssock)
+int proxy(int ssock)
 {
     int rval, fd, ready, on = 1;
     struct sockaddr_in caddr;
@@ -151,7 +154,7 @@ int proxy(struct connectionq *q, int ssock)
     FD_ZERO(&readfds_master);
     FD_SET(ssock, &readfds_master);
 
-    /* Watch for data on listener socket and add to connection queue */
+    /* Watch for data on listener socket and spawn connection handler */
     while (!exit_requested) {
         readfds = readfds_master;
 
@@ -176,7 +179,12 @@ int proxy(struct connectionq *q, int ssock)
                 break;
             }
 
-            connectionq_put(q, fd);
+            /* Spawn connection handler */
+            pthread_t thread;
+            if (pthread_create(&thread, NULL, handle_connection, (void *)&fd) < 0) {
+                printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
+                return errno;
+            }
         } else {
             printl(LOG_WARN "pselect returned 0 on listener socket\n");
         }
@@ -186,51 +194,23 @@ int proxy(struct connectionq *q, int ssock)
 }
 
 
-void *worker(void *queue)
+void *handle_connection(void *fd_vptr)
 {
-    struct connectionq *q = (struct connectionq *)queue;
-    int fd;
+    int fd = *(int *)fd_vptr;
+    request_t req = {0};
     struct sockaddr_in peer_addr;
     socklen_t addr_len = sizeof(peer_addr);
-    const unsigned int thread_id = pthread_self();
-
-    while (!exit_requested) {
-        printl(LOG_DEBUG "Thread %u waiting for connections\n", thread_id);
-        connectionq_wait_if_empty(q);
-        if (exit_requested) {
-            printl(LOG_DEBUG "Worker thread %u terminated\n", thread_id);
-            break;
-        }
-
-        fd = connectionq_get(q);
-        if ((getpeername(fd, (struct sockaddr *)&peer_addr, &addr_len)) < 0) {
-            printl(LOG_WARN "getpeername failed - %s\n", strerror(errno));
-            break;
-        }
-
-        printl(LOG_DEBUG "Thread %u handling socket %d\n", thread_id, fd);
-        handle_connection(fd, &peer_addr);
-        close(fd);
-    }
-
-    printl(LOG_DEBUG "Worker thread %u exiting\n", thread_id);
-    pthread_exit(NULL);
-}
-
-
-/*
- * Pulled into separate function for readability but inlined into thread
- * worker, otherwise not much gain from thread pool.
- */
-inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
-{
-    request_t req = {0};
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
     fd_set readfds_master, readfds;
     int rval, nrecv, nrecvd, nunparsed, timer, ready;
     bool keepalive;
     char reqbuf[REQ_BUFLEN] = "";
     char requested_file_path[REQ_BUFLEN] = "";
+
+    if ((getpeername(fd, (struct sockaddr *)&peer_addr, &addr_len)) < 0) {
+        printl(LOG_WARN "getpeername failed - %s\n", strerror(errno));
+        pthread_exit(NULL);
+    }
 
     /* If keep-alive requested, watch fd for KEEPALIVE_TIMEOUT_S seconds */
     FD_ZERO(&readfds_master);
@@ -239,7 +219,7 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
     do {
         timer = 1;
         request_destroy(&req);  /* safe to call on uninit'd req struct */
-        request_init(&req, fd, peer_addr);
+        request_init(&req, fd, &peer_addr);
 
         nunparsed = 0;
         nrecv = REQ_BUFLEN;
@@ -314,7 +294,32 @@ inline void handle_connection(int fd, struct sockaddr_in *peer_addr)
     } while (keepalive);
 
     request_destroy(&req);
+    pthread_exit(NULL);
 }
+
+
+void *handle_request(void *param)
+{
+    (void)param;
+    request_t *req = {0};
+    const unsigned int thread_id = pthread_self();
+
+    while (!exit_requested) {
+        printl(LOG_DEBUG "Thread %u waiting for request\n", thread_id);
+        queue_wait_if_empty(&requestq);
+        if (exit_requested) {
+            printl(LOG_DEBUG "Request handler %u terminated\n", thread_id);
+            break;
+        }
+
+        req = queue_get(&requestq);
+
+    }
+
+    printl(LOG_DEBUG "Worker thread %u exiting\n", thread_id);
+    pthread_exit(NULL);
+}
+
 
 
 /* Return total bytes sent or -1. */
