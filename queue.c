@@ -28,7 +28,7 @@ queue_type_t queue_get(queue_t *q)
     pthread_mutex_unlock(&q->lock);
     queue_signal_consumed(q);
 
-    return sock;
+    return item;
 }
 
 
