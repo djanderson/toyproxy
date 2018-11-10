@@ -14,13 +14,15 @@
 #include <sys/stat.h>           /* stat, struct st */
 #include <unistd.h>             /* close, read, write */
 
+#include <openssl/md5.h>        /* MD5_* */
+
 #include "queue.h"
 #include "hashmap.h"
 #include "printl.h"
 #include "request.h"
 #include "response.h"
 
-#define PROXY_ROOT "www"
+#define PROXY_ROOT ".cache"
 #define MAX_THREADS 15          /* Max request handler threads */
 #define MAX_BACKLOG 100         /* Max connections before ECONNREFUSED error */
 #define MAX_REQUESTS 100        /* Request queue size */
@@ -39,7 +41,7 @@ const struct option longopts[] = {
 atomic_bool exit_requested = false;
 
 queue_t requestq;
-
+hashmap_t file_cache;
 
 static void signal_handler(int __attribute__((__unused__)) sig)
 {
@@ -63,6 +65,8 @@ int send_error(request_t *req, int status);
 int send_file(request_t *req, char *path);
 /* Handle cache timeout. */
 void *cache_gc(void *cache_vptr);
+/* `path' must be allocated with at least size strlen(url->path) + 3. */
+void url_to_cache_path(const url_t *url, char *path);
 
 
 int main(int argc, char *argv[])
@@ -88,11 +92,12 @@ int main(int argc, char *argv[])
 
     queue_init(&requestq, MAX_REQUESTS);
     hashmap_init(&hostname_cache, 100);
-    hostname_cache.timeout = cache_timeout; /* XXX */
+    hashmap_init(&file_cache, 100);
+    file_cache.timeout = cache_timeout;
 
     /* Spawn cache timeout handler */
     if (pthread_create(&cache_gc_thread, NULL, cache_gc,
-                       (void *)&hostname_cache) < 0) {
+                       (void *)&file_cache) < 0) {
         printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
         queue_destroy(&requestq);
         hashmap_destroy(&hostname_cache);
@@ -186,12 +191,73 @@ int proxy(int ssock)
                 printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
                 return errno;
             }
+            pthread_detach(thread);
         } else {
             printl(LOG_WARN "pselect returned 0 on listener socket\n");
         }
     }
 
     return 0;
+}
+
+
+int build_request(request_t *req)
+{
+    int nrecv, nrecvd, nunparsed;
+    char reqbuf[REQ_BUFLEN] = "";
+
+    nunparsed = 0;
+    nrecv = REQ_BUFLEN;
+    while ((nrecvd = read(req->fd, reqbuf + nunparsed, nrecv)) > 0) {
+        reqbuf[nunparsed + nrecvd] = '\0';
+        nunparsed = request_deserialize(req, reqbuf, nunparsed + nrecvd);
+        if (nunparsed < 0) {
+            send_error(req, 400);
+            return 1;
+        }
+        nrecv = REQ_BUFLEN - nunparsed;
+        if (req->complete) {
+            printl(LOG_DEBUG "Request complete\n");
+            break;
+        }
+    }
+
+    if (nrecvd <= 0) {
+        printl(LOG_DEBUG "Connection closed\n");
+        if (nrecvd == 0 && nunparsed == REQ_BUFLEN) {
+            send_error(req, 431);
+        } else if (nrecvd == -1) {
+            printl(LOG_WARN "read - %s\n", strerror(errno));
+            send_error(req, 500);
+        }
+
+        return 1;
+    }
+
+    assert(req->complete);
+
+    return 0;
+}
+
+
+/* Return a heap-alloc'd string representing the hex of the md5 hash of `s'. */
+char *strmd5(const char *s, int length)
+{
+    int n;
+    MD5_CTX ctx;
+    unsigned char digest[16];
+    char *hexstr = (char*)malloc(33);
+
+    /* Take md5 of s */
+    MD5_Init(&ctx);
+    MD5((const unsigned char *) s, length, digest);
+    MD5_Final(digest, &ctx);
+
+    /* Convert digest to hexstr string */
+    for (n = 0; n < 16; ++n)
+        snprintf(&(hexstr[n*2]), 16*2, "%02x", (unsigned int) digest[n]);
+
+    return hexstr;
 }
 
 
@@ -203,9 +269,8 @@ void *handle_connection(void *fd_vptr)
     socklen_t addr_len = sizeof(peer_addr);
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
     fd_set readfds_master, readfds;
-    int rval, nrecv, nrecvd, nunparsed, timer, ready;
+    int rval, timer, ready;
     bool keepalive;
-    char reqbuf[REQ_BUFLEN] = "";
     char requested_file_path[REQ_BUFLEN] = "";
 
     if ((getpeername(fd, (struct sockaddr *)&peer_addr, &addr_len)) < 0) {
@@ -222,33 +287,8 @@ void *handle_connection(void *fd_vptr)
         request_destroy(&req);  /* safe to call on uninit'd req struct */
         request_init(&req, fd, &peer_addr);
 
-        nunparsed = 0;
-        nrecv = REQ_BUFLEN;
-        while ((nrecvd = read(fd, reqbuf + nunparsed, nrecv)) > 0) {
-            reqbuf[nunparsed + nrecvd] = '\0';
-            nunparsed = request_deserialize(&req, reqbuf, nunparsed + nrecvd);
-            if (nunparsed < 0) {
-                send_error(&req, 400);
-                continue;
-            }
-            nrecv = REQ_BUFLEN - nunparsed;
-            if (req.complete) {
-                printl(LOG_DEBUG "Request complete\n");
-                break;
-            }
-        }
-
-        if (nrecvd <= 0) {
-            printl(LOG_DEBUG "Connection closed\n");
-            if (nrecvd == 0 && nunparsed == REQ_BUFLEN)
-                send_error(&req, 431);
-            else if (nrecvd == -1)
-                printl(LOG_WARN "read - %s\n", strerror(errno));
-
+        if (build_request(&req) != 0)
             break;
-        }
-
-        assert(req.complete);
 
         keepalive = request_conn_is_keepalive(&req);
 
@@ -263,11 +303,22 @@ void *handle_connection(void *fd_vptr)
 
         strcpy(requested_file_path, PROXY_ROOT);
 
+        /* XXX */
+        char path = malloc(strlen(req.url->path + 3));
         if (request_method_is_get(&req)) {
-            if (send_file(&req, requested_file_path) < 0) {
-                send_error(&req, 404);
-                break;
+            if (hashmap_get(&file_cache, req.url->path, (char **) &path) != -1) {
+                if (send_file(&req, path) < 0) {
+                    send_error(&req, 404);
+                    break;
+                }
             }
+
+            /* TODO - open socket to req.url->host:req.url->port */
+            /* TODO - sent FULL request to above */
+            /* TODO - read response from remote */
+            /* TODO - write response to requester */
+            /* TODO - if response is 200 - cache file */
+
         } else {
             send_error(&req, 405);
             break;
@@ -294,6 +345,7 @@ void *handle_connection(void *fd_vptr)
 
     } while (keepalive);
 
+    close(fd);
     request_destroy(&req);
     pthread_exit(NULL);
 }
@@ -302,7 +354,7 @@ void *handle_connection(void *fd_vptr)
 void *handle_request(void *param)
 {
     (void)param;
-    request_t *req = {0};
+    request_t req = {0};
     const unsigned int thread_id = pthread_self();
 
     while (!exit_requested) {
@@ -314,7 +366,6 @@ void *handle_request(void *param)
         }
 
         req = queue_get(&requestq);
-
     }
 
     printl(LOG_DEBUG "Worker thread %u exiting\n", thread_id);
@@ -334,7 +385,7 @@ int send_file(request_t *req, char *path)
     const char *ctype;
     int ntotal = 0, nsend, nsent;
 
-    if (request_path_is_root(req))
+    if (request_path_is_dir(req))
         strcat(path, "/index.html");
     else
         strcat(path, req->url->path);
@@ -506,10 +557,24 @@ void *cache_gc(void *cache_vptr)
     while (!exit_requested) {
         usleep(100000);         /* check exit_requested 10 times a second */
         if (!(clk++ % 10))
-            hashmap_gc(cache, NULL);  /* run gc only once a second */
+            hashmap_gc(cache);  /* run gc only once a second */
     }
 
     printl(LOG_DEBUG "Cache GC exiting\n");
 
     pthread_exit(NULL);
+}
+
+
+void url_to_cache_path(const url_t *url, char *path)
+{
+    char *p = strdup(url->path);
+
+    /* Replace illegal path characters */
+    for (int i = 0; p[i] != '\0'; i++)
+        if (p[i] == '/')
+            p[i] = '_';
+
+    sprintf(path, "%s/%s/%s", PROXY_ROOT, url->host, p);
+    free(p);
 }

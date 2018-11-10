@@ -7,7 +7,7 @@
 #include <string.h>             /* strcmp, strcasecmp */
 
 #include "hashmap.h"
-#include "urlparse.h"
+#include "url.h"
 
 #define REQ_BUFLEN 1000
 
@@ -51,9 +51,14 @@ static inline bool request_method_is_post(request_t *req)
 }
 
 
-static inline bool request_path_is_root(request_t *req)
+static inline bool request_path_is_dir(request_t *req)
 {
-    return !strcmp(req->url->path, "/");
+    char *c = req->url->path;
+
+    while (++req->url->path)
+        c = req->url->path;
+
+    return *c == '/';
 }
 
 

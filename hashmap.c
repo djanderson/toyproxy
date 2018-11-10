@@ -210,6 +210,11 @@ int hashmap_del(hashmap_t *map, const char *key)
             /* replace non-head entry */
             last_entry->next = entry->next;
 
+        if (map->unlinker) {
+            printl(LOG_DEBUG "Unlinking %s\n", entry->value);
+            map->unlinker(entry->value);
+        }
+
         hashmap_entry_destroy(entry);
         free(entry);
 
@@ -222,11 +227,12 @@ int hashmap_del(hashmap_t *map, const char *key)
 }
 
 
-void hashmap_gc(hashmap_t *map, hashmap_gc_unlinker unlinker)
+void hashmap_gc(hashmap_t *map)
 {
     assert(map != NULL);
 
     hashmap_entry_t *current, *next;
+    const char msg[] = LOG_DEBUG "Removing cache entry %s\n";
     unsigned long timeout, now = time(NULL);
 
     pthread_mutex_lock(&map->lock);
@@ -239,14 +245,8 @@ void hashmap_gc(hashmap_t *map, hashmap_gc_unlinker unlinker)
             do {
                 next = current->next;
                 if (now - current->timestamp > timeout) {
-                    char *key = current->key;
-                    char *value = current->value;
-                    if (unlinker) {
-                        printl(LOG_DEBUG "Unlinking %s\n", value);
-                        unlinker(value);
-                    }
-                    printl(LOG_DEBUG "Removing cache entry %s\n", key);
-                    hashmap_del(map, key);
+                    printl(msg, current->key);
+                    hashmap_del(map, current->key);
                 }
                 current = next;
             } while (next != NULL);

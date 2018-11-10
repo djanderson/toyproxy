@@ -2,7 +2,7 @@
 #include <stdlib.h>             /* malloc, atoi */
 #include <string.h>             /* str* */
 
-#include "urlparse.h"
+#include "url.h"
 
 
 const char err_invalid_scheme[] = "Invalid scheme `%s' - use http";
