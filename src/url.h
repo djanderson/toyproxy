@@ -19,7 +19,7 @@ typedef struct url {
  *
  * You must call `url_destroy` on the url struct even if the parse fails.
  */
-int url_init(url_t *url, char *url_str);
+int url_init(url_t *url, const char *url_str);
 /* Free memory. */
 void url_destroy(url_t *url);
 
