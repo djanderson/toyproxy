@@ -1,7 +1,8 @@
 #include <assert.h>             /* assert */
+#include <errno.h>              /* errno */
 #include <stdio.h>              /* sprintf */
 #include <stdlib.h>             /* size_t */
-#include <string.h>             /* memset, strlen */
+#include <string.h>             /* memset, str* */
 #include <time.h>               /* gmtime */
 
 #include "printl.h"
@@ -10,7 +11,7 @@
 
 
 const char response_date_fmt[] = "%a, %d %b %Y %H:%M:%S %Z";
-const char response_server[] = "shws";
+const char response_server[] = "webproxy";
 const char response_version_1_0[] = "HTTP/1.0";
 const char response_version_1_1[] = "HTTP/1.1";
 const char response_success_200[] = "200 Success";
@@ -22,52 +23,65 @@ const char response_server_error_500[] = "500 Internal Server Error";
 const char error_500[] = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
 
 
-size_t response_serialize(response_t *res, char *buf, size_t buflen)
+int response_serialize(response_t *res, char **buf, size_t *buflen)
 {
+    int rval;
+    char *status, *server, *date, *connection, *content_type, *content_length;
+    int clen = 0;
     size_t nbytes = 0;
 
-    memset(buf, 0, buflen);
+    status = res->header.status_line;
+    hashmap_get(&res->header.fields, "Date", &date);
+    hashmap_get(&res->header.fields, "Server", &server);
+    hashmap_get(&res->header.fields, "Connection", &connection);
+    hashmap_get(&res->header.fields, "Content-Type", &content_type);
+    hashmap_get(&res->header.fields, "Content-Length", &content_length);
 
     /* Precalculate size of response header (line + 2 for \r\n) */
-    nbytes += strlen(res->status_line) + 2;
-    nbytes += strlen(res->server) + 2;
-    nbytes += strlen(res->date) + 2;
-    if (res->content_type)
-        nbytes += strlen(res->content_type) + 2;
-    if (res->content_length)
-        nbytes += strlen(res->content_length) + 2;
-    nbytes += strlen(res->connection) + 2;
-    nbytes += 2;                /* for end of buffer \r\n */
+    nbytes += strlen(status) + 2;
+    nbytes += strlen(server) + 2;
+    nbytes += strlen(date) + 2;
+    nbytes += strlen(connection) + 2;
+    if (content_type)
+        nbytes += strlen(content_type) + 2;
+    if (content_length) {
+        nbytes += strlen(content_length) + 2;
+        clen = atoi(content_length);
+    }
+    nbytes += 2;                /* end of header \r\n */
+    nbytes += clen;             /* response body */
 
-    /* If response won't fit in buf, return 500 */
-    if (nbytes > buflen) {
-        printl(LOG_ERR "Error serializing response header, need %d bytes, but "
-               "given %d\n", nbytes, buflen);
-        nbytes = strlen(error_500);
-        assert(nbytes <= buflen);
-        strcpy(buf, error_500);
-        return nbytes;
+    /* Try to allocate enough memory to serialize this response */
+    *buf = malloc(nbytes);
+    if (*buf) {
+        /* Build response buffer */
+        sprintf("%s\r\n%s\r\n%s\r\n%s\r\n", status, server, date, connection);
+        if (content_type) {
+            strcat(*buf, content_type);
+            strcat(*buf, "\r\n");
+        }
+        if (content_length) {
+            strcat(*buf, content_length);
+            strcat(*buf, "\r\n");
+        }
+        strcat(*buf, "\r\n");       /* end of header */
+        assert(strlen(*buf) == nbytes - clen);
+        memcpy(*buf + (nbytes - clen), res->content, clen);
+        rval = nbytes;
+    } else {
+        /* Out of memory */
+        printl(LOG_ERR "Error serializing response - %s\n", strerror(errno));
+        *buf = (char *) error_500;
+        *buflen = strlen(error_500);
+        rval = -1;
     }
 
-    /* Build response buffer */
-    strcat(buf, res->status_line);
-    strcat(buf, "\r\n");
-    strcat(buf, res->server);
-    strcat(buf, "\r\n");
-    strcat(buf, res->date);
-    strcat(buf, "\r\n");
-    if (res->content_type) {
-        strcat(buf, res->content_type);
-        strcat(buf, "\r\n");
-    }
-    if (res->content_length) {
-        strcat(buf, res->content_length);
-        strcat(buf, "\r\n");
-    }
-    strcat(buf, res->connection);
-    strcat(buf, "\r\n");
-    strcat(buf, "\r\n");
-    assert(strlen(buf) == nbytes);
+    /* Clean up */
+    free(date);
+    free(server);
+    free(connection);
+    free(content_type);
+    free(content_length);
 
     return nbytes;
 }
@@ -75,96 +89,60 @@ size_t response_serialize(response_t *res, char *buf, size_t buflen)
 
 int response_deserialize(response_t* res, char* buf, size_t buflen)
 {
-    bool last_line, last_line_partial;
-    int nunparsed;
-    char *line, *previous_line;
-    char *tmpbuf[REQ_BUFLEN + 1];
-    char *orig_buf = buf;
-    char *saveptr;
-    const char delim[] = "\r\n";
-
-    last_line_partial = (buflen > 2 && strcmp(buf + buflen - 2, "\r\n") != 0);
-    res->complete = (buflen > 4 && strcmp(buf + buflen - 4, "\r\n\r\n") == 0);
-
-    line = strtok_r(buf, delim, &saveptr);
-    while (line != NULL) {
-        previous_line = line;
-        line = strtok_r(NULL, delim, &saveptr);
-        last_line = line == NULL;
-    }
-
-    buf = orig_buf;
-
-    if (last_line_partial) {
-        nunparsed = strlen(previous_line);
-        strcpy((char *)tmpbuf, previous_line);
-        strcpy(buf, (char *)tmpbuf);
-        return nunparsed;
-    }
+    int nremaining = 0, content_length;
+    bool header_complete = false;
+    char *line, *key, *value;
+    char *tmpbuf = malloc(buflen);
+    memcpy(tmpbuf, buf, buflen);
+    char * const saveptr = tmpbuf;
+    const char delim[] = "\n";
 
     return 0;
 }
 
 
-
-void response_init(request_t *req, response_t *res, int status,
-                   const char *ctype, size_t clen)
+void response_init_from_request(request_t *req, response_t *res, int status,
+                                const char *ctype, size_t clen)
 {
     const int field_len = 100;
+    char field[field_len];
 
-    char status_str[field_len];
-    status_string(status, status_str, field_len);
-    res->status_line = malloc(field_len);
-    sprintf(res->status_line, "%s %s", req->http_version, status_str);
+    status_string(status, field, field_len);
+    res->header.status_line = malloc(strlen(field) + 10);
+    sprintf(res->header.status_line, "%s %s", req->http_version, field);
 
-    res->server = malloc(field_len);
-    sprintf(res->server, "Server: %s", response_server);
+    hashmap_add(&res->header.fields, "Server", response_server);
 
-    res->date = malloc(field_len);
     time_t now = time(0);
     struct tm gmt = *gmtime(&now);
-    char date[field_len];
-    strftime(date, field_len, response_date_fmt, &gmt);
-    sprintf(res->date, "Date: %s", date);
+    strftime(field, field_len, response_date_fmt, &gmt);
+    hashmap_add(&res->header.fields, "Date", field);
 
-    if (ctype) {
-        res->content_type = malloc(field_len);
-        sprintf(res->content_type, "Content-Type: %s", ctype);
-    } else {
-        res->content_type = NULL;
-    }
+    if (ctype)
+        hashmap_add(&res->header.fields, "Content-Type", ctype);
 
     if (clen) {
-        res->content_length = malloc(field_len);
-        sprintf(res->content_length, "Content-Length: %lu", clen);
-    } else {
-        res->content_length = NULL;
+        sprintf(field, "%lu", clen);
+        hashmap_add(&res->header.fields, "Content-Length", field);
     }
 
-    res->connection = malloc(field_len);
-    if (req->connection) {
-        sprintf(res->connection, "Connection: %s", req->connection);
-    } else {
-        char *conn = request_version_is_1_1(req) ? "keep-alive" : "close";
-        sprintf(res->connection, "Connection: %s", conn);
-    }
+    if (req->connection)
+        strcpy(field, req->connection);
+    else
+        strcpy(field, request_version_is_1_1(req) ? "keep-alive" : "close");
+
+    hashmap_add(&res->header.fields, "Connection", field);
 }
 
 
 void response_destroy(response_t *res)
 {
-    if (res->status_line)
-        free(res->status_line);
-    if (res->server)
-        free(res->server);
-    if (res->date)
-       free(res->date);
-    if (res->content_type)
-        free(res->content_type);
-    if (res->content_length)
-        free(res->content_length);
-    if (res->connection)
-        free(res->connection);
+    if (res->header.status_line)
+        free(res->header.status_line);
+    if (res->header.raw)
+        free(res->header.raw);
+
+    hashmap_destroy(&res->header.fields);
 }
 
 

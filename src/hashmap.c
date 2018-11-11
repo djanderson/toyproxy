@@ -40,10 +40,10 @@ static inline int hashmap_entry_init(hashmap_entry_t *entry,
 static inline void hashmap_entry_destroy(hashmap_entry_t *entry)
 {
     assert(entry->key != NULL);
-    free(entry->key);
+    free((char *) entry->key);
 
     assert(entry->value != NULL);
-    free(entry->value);
+    free((char *) entry->value);
 }
 
 
@@ -51,6 +51,10 @@ int hashmap_init(hashmap_t *map, size_t size)
 {
     int rval = 0;
     pthread_mutexattr_t mutexattr;
+
+    if (!size)
+        return -1;
+
     map->bucket = calloc(size, sizeof(hashmap_entry_t *));
     map->size = size;
 
@@ -99,7 +103,6 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
     assert(key != NULL);
     assert(value != NULL);
 
-    int rval = -1;
     bool entry_exists = false;
     hashmap_entry_t *last_entry, *entry;
     hash_t key_hash = hash((unsigned char *) key);
@@ -121,23 +124,30 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
     }
 
     if (entry_exists) {
-        entry->timestamp = time(NULL);
-        rval = idx;
+        /* Update existing entry */
+        if (strcmp(entry->value, value)) {
+            free((void *) entry->value);
+            entry->value = strdup(value);
+        }
+        if (map->timeout)
+            entry->timestamp = time(NULL);
     } else {
         /* Add new entry */
         entry = malloc(sizeof(hashmap_entry_t));
-        if (entry != NULL) {
-            hashmap_entry_init(entry, key, value);
-            if (last_entry == NULL)
-                map->bucket[idx] = entry; /* add new entry at head of list */
-            else
-                last_entry->next = entry; /* add new entry at tail of list */
-        }
+        if (entry == NULL)
+            return -1;
+
+        hashmap_entry_init(entry, key, value);
+        if (last_entry == NULL)
+            map->bucket[idx] = entry; /* add new entry at head of list */
+        else
+            last_entry->next = entry; /* add new entry at tail of list */
+
     }
 
     pthread_mutex_unlock(&map->lock);
 
-    return rval;
+    return idx;
 }
 
 
@@ -165,10 +175,13 @@ int hashmap_get(hashmap_t *map, const char *key, char **value)
         entry = entry->next;
     }
 
+    *value = NULL;
+
     if (entry_exists) {
-        *value = entry->value;
-        entry->timestamp = time(NULL);
         rval = idx;
+        *value = strdup(entry->value);
+        if (map->timeout)
+            entry->timestamp = time(NULL);
     }
 
     pthread_mutex_unlock(&map->lock);

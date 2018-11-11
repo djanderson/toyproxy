@@ -357,17 +357,12 @@ void *handle_request(void *param)
 int send_file(request_t *req, char *path)
 {
     response_t res;
-    char buf[RES_BUFLEN] = "";
-    size_t buflen, clen;
+    char *resbuf;
+    size_t resbuflen, clen;
     FILE *file;
     char *fileext;
     const char *ctype;
     int ntotal = 0, nsend, nsent;
-
-    if (request_path_is_dir(req))
-        strcat(path, "/index.html");
-    else
-        strcat(path, req->url->path);
 
     if ((file = fopen(path, "rb")) == NULL) {
         printl(LOG_DEBUG "Failed to open %s - %s\n", path, strerror(errno));
@@ -399,19 +394,22 @@ int send_file(request_t *req, char *path)
         ctype = "application/octet-stream";
 
     /* Send header */
-    response_init(req, &res, 200, ctype, clen);
-    buflen = response_serialize(&res, buf, RES_BUFLEN);
-    ntotal += write(req->client_fd, buf, buflen);
+    response_init_from_request(req, &res, 200, ctype, clen);
+    response_serialize(&res, &resbuf, &resbuflen);
+    ntotal += write(req->client_fd, resbuf, resbuflen);
 
     const char *msg = LOG_INFO "(%d) -> %s 200 %s %s (%lu)\n";
     /* drop .cache */
     printl(msg, req->client_fd, req->ip, path + 6, ctype, clen);
 
     /* Send body */
-    while ((nsend = fread(buf, 1, RES_BUFLEN, file))) {
-        nsent = write(req->client_fd, buf, nsend);
-        ntotal+= nsent;
-    }
+    /* FIXME */
+    /*
+     * while ((nsend = fread(buf, 1, RES_BUFLEN, file))) {
+     *     nsent = write(req->client_fd, buf, nsend);
+     *     ntotal+= nsent;
+     * }
+     */
 
     response_destroy(&res);
     fclose(file);
@@ -428,10 +426,13 @@ int send_error(request_t *req, int status)
 
     printl(LOG_INFO "(%d) -> %s %d\n", req->client_fd, req->ip, status);
 
-    response_init(req, &res, status, NULL, 0);
-    buflen = response_serialize(&res, buf, RES_BUFLEN);
-    if ((nsent = write(req->client_fd, buf, buflen)) < 0)
-        printl(LOG_WARN "Socket write failed - %s\n", strerror(errno));
+    /* FIXME */
+    /*
+     * response_init(req, &res, status, NULL, 0);
+     * buflen = response_serialize(&res, buf, RES_BUFLEN);
+     * if ((nsent = write(req->client_fd, buf, buflen)) < 0)
+     *     printl(LOG_WARN "Socket write failed - %s\n", strerror(errno));
+     */
 
     response_destroy(&res);
     return nsent;
