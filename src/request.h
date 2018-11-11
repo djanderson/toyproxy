@@ -13,22 +13,25 @@
 
 
 typedef struct request {
-    int fd;
-    bool complete;
-    char *ip;
-    char *method;
-    url_t *url;
-    char *version;
-    char *connection;
-    char *content_length;
+    bool complete;              /* indicates request completely received */
+    int client_fd;              /* fd of the client socket */
+    int server_fd;              /* fd of the server socket */
+    char *raw;                  /* raw request buffer */
+    size_t raw_buffer_sz;       /* size of the raw buffer */
+    char *ip[INET_ADDRSTRLEN];  /* ip address of the server */
+    char *method;               /* request method (e.g., GET) */
+    url_t *url;                 /* parsed url struct */
+    char *http_version;         /* status line HTTP version (e.g., HTTP/1.1) */
+    char *content_length;       /* HTTP Content-Length value */
+    char *connection;           /* HTTP Connection value (e.g., keep-alive) */
 } request_t;
 
 hashmap_t hostname_cache;
 
 void request_init(request_t *req, int fd, const struct sockaddr_in *addr);
 void request_destroy(request_t *req);
-/* Return the number of bytes not consumed from buf or -1 for error. */
-size_t request_deserialize(request_t *req, char *buf, size_t buflen);
+/* Return 0 if successful or -1 for error. */
+int request_deserialize(request_t *req, char *buf, size_t buflen);
 /* Return -1 for parse error or 0 for success. */
 int request_deserialize_line(request_t *req, const char *line);
 /*
@@ -64,7 +67,7 @@ static inline bool request_path_is_dir(request_t *req)
 
 static inline bool request_version_is_1_1(request_t *req)
 {
-    return !strcasecmp(req->version, "HTTP/1.1");
+    return !strcasecmp(req->http_version, "HTTP/1.1");
 }
 
 

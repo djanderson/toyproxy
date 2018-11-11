@@ -208,7 +208,7 @@ int build_request(request_t *req)
 
     nunparsed = 0;
     nrecv = REQ_BUFLEN;
-    while ((nrecvd = read(req->fd, reqbuf + nunparsed, nrecv)) > 0) {
+    while ((nrecvd = read(req->client_fd, reqbuf + nunparsed, nrecv)) > 0) {
         reqbuf[nunparsed + nrecvd] = '\0';
         nunparsed = request_deserialize(req, reqbuf, nunparsed + nrecvd);
         if (nunparsed < 0) {
@@ -237,27 +237,6 @@ int build_request(request_t *req)
     assert(req->complete);
 
     return 0;
-}
-
-
-/* Return a heap-alloc'd string representing the hex of the md5 hash of `s'. */
-char *strmd5(const char *s, int length)
-{
-    int n;
-    MD5_CTX ctx;
-    unsigned char digest[16];
-    char *hexstr = (char*)malloc(33);
-
-    /* Take md5 of s */
-    MD5_Init(&ctx);
-    MD5((const unsigned char *) s, length, digest);
-    MD5_Final(digest, &ctx);
-
-    /* Convert digest to hexstr string */
-    for (n = 0; n < 16; ++n)
-        snprintf(&(hexstr[n*2]), 16*2, "%02x", (unsigned int) digest[n]);
-
-    return hexstr;
 }
 
 
@@ -304,7 +283,7 @@ void *handle_connection(void *fd_vptr)
         strcpy(requested_file_path, PROXY_ROOT);
 
         /* XXX */
-        char path = malloc(strlen(req.url->path + 3));
+        char *path = malloc(strlen(req.url->path + 3));
         if (request_method_is_get(&req)) {
             if (hashmap_get(&file_cache, req.url->path, (char **) &path) != -1) {
                 if (send_file(&req, path) < 0) {
@@ -422,14 +401,15 @@ int send_file(request_t *req, char *path)
     /* Send header */
     response_init(req, &res, 200, ctype, clen);
     buflen = response_serialize(&res, buf, RES_BUFLEN);
-    ntotal += write(req->fd, buf, buflen);
+    ntotal += write(req->client_fd, buf, buflen);
 
     const char *msg = LOG_INFO "(%d) -> %s 200 %s %s (%lu)\n";
-    printl(msg, req->fd, req->ip, path + 3, ctype, clen); /* drop www */
+    /* drop .cache */
+    printl(msg, req->client_fd, req->ip, path + 6, ctype, clen);
 
     /* Send body */
     while ((nsend = fread(buf, 1, RES_BUFLEN, file))) {
-        nsent = write(req->fd, buf, nsend);
+        nsent = write(req->client_fd, buf, nsend);
         ntotal+= nsent;
     }
 
@@ -446,11 +426,11 @@ int send_error(request_t *req, int status)
     char buf[RES_BUFLEN] = "";
     int nsent, buflen;
 
-    printl(LOG_INFO "(%d) -> %s %d\n", req->fd, req->ip, status);
+    printl(LOG_INFO "(%d) -> %s %d\n", req->client_fd, req->ip, status);
 
     response_init(req, &res, status, NULL, 0);
     buflen = response_serialize(&res, buf, RES_BUFLEN);
-    if ((nsent = write(req->fd, buf, buflen)) < 0)
+    if ((nsent = write(req->client_fd, buf, buflen)) < 0)
         printl(LOG_WARN "Socket write failed - %s\n", strerror(errno));
 
     response_destroy(&res);

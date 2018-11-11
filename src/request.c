@@ -7,7 +7,7 @@
 #include "request.h"
 
 
-size_t request_deserialize(request_t *req, char *buf, size_t buflen)
+int request_deserialize(request_t *req, char *buf, size_t buflen)
 {
     bool last_line, last_line_partial;
     int nunparsed;
@@ -58,7 +58,7 @@ int request_deserialize_line(request_t *req, const char *cline)
         uri = strdup(strsep(&value, " "));
         rval = url_init(req->url, uri);
         free(uri);
-        req->version = strdup(strsep(&value, " "));
+        req->http_version = strdup(strsep(&value, " "));
         if (rval || strsep(&value, " ") != NULL)
             rval = -1;
     } else {
@@ -112,12 +112,12 @@ void request_init(request_t *req, int fd, const struct sockaddr_in *addr)
 {
     char *ip =  malloc(INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &(addr->sin_addr), ip, INET_ADDRSTRLEN);
-    req->fd = fd;
-    req->ip = ip;
+    req->client_fd = fd;
+    memcpy(req->ip, ip, INET_ADDRSTRLEN);
     req->complete = 0;
     req->method = NULL;
     req->url = malloc(sizeof(url_t));
-    req->version = NULL;
+    req->http_version = NULL;
     req->connection = NULL;
     req->content_length = NULL;
 }
@@ -125,12 +125,10 @@ void request_init(request_t *req, int fd, const struct sockaddr_in *addr)
 
 void request_destroy(request_t *req)
 {
-    if (req->ip)
-        free(req->ip);
     if (req->method)
         free(req->method);
-    if (req->version)
-        free(req->version);
+    if (req->http_version)
+        free(req->http_version);
     if (req->connection)
         free(req->connection);
     if (req->content_length)

@@ -73,6 +73,40 @@ size_t response_serialize(response_t *res, char *buf, size_t buflen)
 }
 
 
+int response_deserialize(response_t* res, char* buf, size_t buflen)
+{
+    bool last_line, last_line_partial;
+    int nunparsed;
+    char *line, *previous_line;
+    char *tmpbuf[REQ_BUFLEN + 1];
+    char *orig_buf = buf;
+    char *saveptr;
+    const char delim[] = "\r\n";
+
+    last_line_partial = (buflen > 2 && strcmp(buf + buflen - 2, "\r\n") != 0);
+    res->complete = (buflen > 4 && strcmp(buf + buflen - 4, "\r\n\r\n") == 0);
+
+    line = strtok_r(buf, delim, &saveptr);
+    while (line != NULL) {
+        previous_line = line;
+        line = strtok_r(NULL, delim, &saveptr);
+        last_line = line == NULL;
+    }
+
+    buf = orig_buf;
+
+    if (last_line_partial) {
+        nunparsed = strlen(previous_line);
+        strcpy((char *)tmpbuf, previous_line);
+        strcpy(buf, (char *)tmpbuf);
+        return nunparsed;
+    }
+
+    return 0;
+}
+
+
+
 void response_init(request_t *req, response_t *res, int status,
                    const char *ctype, size_t clen)
 {
@@ -81,7 +115,7 @@ void response_init(request_t *req, response_t *res, int status,
     char status_str[field_len];
     status_string(status, status_str, field_len);
     res->status_line = malloc(field_len);
-    sprintf(res->status_line, "%s %s", req->version, status_str);
+    sprintf(res->status_line, "%s %s", req->http_version, status_str);
 
     res->server = malloc(field_len);
     sprintf(res->server, "Server: %s", response_server);
