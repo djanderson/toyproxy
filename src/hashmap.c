@@ -47,19 +47,21 @@ static inline void hashmap_entry_destroy(hashmap_entry_t *entry)
 }
 
 
-int hashmap_init(hashmap_t *map, size_t size)
+int hashmap_init(hashmap_t *map, size_t bucket_size)
 {
     int rval = 0;
     pthread_mutexattr_t mutexattr;
 
-    if (!size)
+    if (!bucket_size)
         return -1;
 
-    map->bucket = calloc(size, sizeof(hashmap_entry_t *));
-    map->size = size;
+    map->bucket = calloc(bucket_size, sizeof(hashmap_entry_t *));
+    map->bucket_size = bucket_size;
 
     if (map->bucket == NULL)    /* out of memory */
         return -1;
+
+    map->size = 0;
 
     pthread_mutexattr_init(&mutexattr);
     pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_RECURSIVE);
@@ -80,7 +82,7 @@ void hashmap_destroy(hashmap_t *map)
         return;
 
     /* free entries */
-    for (size_t i = 0; i < map->size; i++) {
+    for (size_t i = 0; i < map->bucket_size; i++) {
         if (map->bucket[i] != NULL) {
             current = map->bucket[i];
             do {
@@ -106,7 +108,7 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
     bool entry_exists = false;
     hashmap_entry_t *last_entry, *entry;
     hash_t key_hash = hash((unsigned char *) key);
-    int idx = key_hash % map->size;
+    int idx = key_hash % map->bucket_size;
 
     last_entry = entry = map->bucket[idx];
 
@@ -143,6 +145,7 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
         else
             last_entry->next = entry; /* add new entry at tail of list */
 
+        map->size++;
     }
 
     pthread_mutex_unlock(&map->lock);
@@ -160,7 +163,7 @@ int hashmap_get(hashmap_t *map, const char *key, char **value)
     bool entry_exists = false;
     hashmap_entry_t *entry;
     hash_t key_hash = hash((unsigned char *) key);
-    int idx = key_hash % map->size;
+    int idx = key_hash % map->bucket_size;
 
     entry = map->bucket[idx];
 
@@ -199,7 +202,7 @@ int hashmap_del(hashmap_t *map, const char *key)
     bool entry_exists = false;
     hashmap_entry_t *last_entry, *entry;
     hash_t key_hash = hash((unsigned char *) key);
-    int idx = key_hash % map->size;
+    int idx = key_hash % map->bucket_size;
 
     last_entry = entry = map->bucket[idx];
 
@@ -230,7 +233,7 @@ int hashmap_del(hashmap_t *map, const char *key)
 
         hashmap_entry_destroy(entry);
         free(entry);
-
+        map->size--;
         rval = idx;
     }
 
@@ -252,7 +255,10 @@ void hashmap_gc(hashmap_t *map)
 
     timeout = map->timeout;
 
-    for (size_t i = 0; i < map->size; i++) {
+    if (!timeout)               /* noop */
+        return;
+
+    for (size_t i = 0; i < map->bucket_size; i++) {
         if (map->bucket[i] != NULL) {
             current = map->bucket[i];
             do {

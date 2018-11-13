@@ -20,14 +20,15 @@ typedef struct hashmap_entry {
 
 typedef struct hashmap {
     hashmap_entry_t **bucket;   /* the hash map's array */
-    size_t size;                /* size of the array */
+    size_t bucket_size;         /* size of the "bucket" array */
+    size_t size;                /* number of entries in the map */
     pthread_mutex_t lock;       /* map lock for multithreading support */
     unsigned long timeout;      /* age in secs to delete entry (0 = never) */
     hashmap_unlinker unlinker;  /* if non-NULL, call unlinker(value) on del */
 } hashmap_t;
 
 /* Initialize a hash map with the requested bucket size. Return -1 for OOM. */
-int hashmap_init(hashmap_t *map, size_t size);
+int hashmap_init(hashmap_t *map, size_t bucket_size);
 /* Destroy a hash map and all  */
 void hashmap_destroy(hashmap_t *map);
 /* Return the index where the key was added or -1 for out of memory. */
