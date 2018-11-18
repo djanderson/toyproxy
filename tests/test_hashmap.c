@@ -60,6 +60,29 @@ void test_hashmap_add_get_indices()
 }
 
 
+/* Allow testing membership without allocating memory for copy of value */
+void test_hashmap_get_null()
+{
+    int rval;
+
+    hashmap_init(&map, 10);
+
+    hashmap_add(&map, "a", "1");
+    rval = hashmap_get(&map, "a", NULL);
+
+    TEST_ASSERT_GREATER_OR_EQUAL(0, rval);
+}
+
+
+void test_hashmap_has_key()
+{
+    hashmap_init(&map, 10);
+
+    hashmap_add(&map, "a", "1");
+    TEST_ASSERT_TRUE(hashmap_has_key(&map, "a"));
+}
+
+
 void test_hashmap_add_get_force_hash_collision()
 {
     int addidx, getidx;
@@ -112,6 +135,16 @@ void test_hashmap_size()
     /* Deleting a nonexistent key should not change size  */
     hashmap_del(&map, keys[0]);
     TEST_ASSERT_EQUAL_INT(0, map.size);
+}
+
+
+void test_hashmap_empty()
+{
+    hashmap_init(&map, 10);
+
+    TEST_ASSERT_TRUE(hashmap_empty(&map));
+    hashmap_add(&map, "a", "1");
+    TEST_ASSERT_FALSE(hashmap_empty(&map));
 }
 
 
@@ -174,9 +207,12 @@ int main()
     RUN_TEST(test_hashmap_add_get_indices);
     RUN_TEST(test_hashmap_add_get_force_hash_collision);
     RUN_TEST(test_hashmap_size);
+    RUN_TEST(test_hashmap_empty);
     /* Passes but takes about 2 seconds to run - normally disabled */
     //RUN_TEST(test_hashmap_timeout_0_gc_noop);
     RUN_TEST(test_hashmap_unlinker);
+    RUN_TEST(test_hashmap_get_null);
+    RUN_TEST(test_hashmap_has_key);
 
     return UNITY_END();
 }

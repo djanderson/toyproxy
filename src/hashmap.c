@@ -102,6 +102,7 @@ void hashmap_destroy(hashmap_t *map)
 int hashmap_add(hashmap_t *map, const char *key, const char *value)
 {
     assert(map != NULL);
+    assert(map->bucket_size > 0);
     assert(key != NULL);
     assert(value != NULL);
 
@@ -120,7 +121,6 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
             entry_exists = true;
             break;
         }
-
         last_entry = entry;
         entry = entry->next;
     }
@@ -159,7 +159,7 @@ int hashmap_get(hashmap_t *map, const char *key, char **value)
     assert(map != NULL);
     assert(key != NULL);
 
-    int rval = -1;
+    int rval;
     bool entry_exists = false;
     hashmap_entry_t *entry;
     hash_t key_hash = hash((unsigned char *) key);
@@ -174,17 +174,19 @@ int hashmap_get(hashmap_t *map, const char *key, char **value)
             entry_exists = true;
             break;
         }
-
         entry = entry->next;
     }
 
-    *value = NULL;
-
     if (entry_exists) {
         rval = idx;
-        *value = strdup(entry->value);
+        if (value != NULL)
+            *value = strdup(entry->value);
         if (map->timeout)
             entry->timestamp = time(NULL);
+    } else {
+        rval = -1;
+        if (value != NULL)
+            *value = NULL;
     }
 
     pthread_mutex_unlock(&map->lock);
@@ -213,7 +215,6 @@ int hashmap_del(hashmap_t *map, const char *key)
             entry_exists = true;
             break;
         }
-
         last_entry = entry;
         entry = entry->next;
     }

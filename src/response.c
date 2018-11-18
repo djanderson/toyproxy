@@ -89,15 +89,99 @@ int response_serialize(response_t *res, char **buf, size_t *buflen)
 
 int response_deserialize(response_t* res, char* buf, size_t buflen)
 {
-    int nremaining = 0, content_length;
-    bool header_complete = false;
-    char *line, *key, *value;
-    char *tmpbuf = malloc(buflen);
-    memcpy(tmpbuf, buf, buflen);
-    char * const saveptr = tmpbuf;
-    const char delim[] = "\n";
+    const char *bufcur = buf;     /* work on a const str until the end */
+    char *line, *key, *value, *clen, *header_end, *line_end;
+    size_t nunparsed, line_len, line_buffer_sz;
+    size_t header_len, expected_content_len, actual_content_len;
 
-    return 0;
+    nunparsed = 0;
+
+    if (!res->header.complete) {
+        line_buffer_sz = 100;
+        line = malloc(line_buffer_sz);
+        header_end = strstr(bufcur, "\r\n\r\n");
+        do {
+            line_end = strstr(bufcur, "\r\n");
+            if (line_end == NULL)
+                break;
+
+            line_len = line_end - bufcur;
+            if (line_buffer_sz < line_len + 1) {
+                line_buffer_sz = line_len + 1;
+                line = realloc(line, line_buffer_sz);
+            }
+
+            memcpy(line, bufcur, line_len);
+            line[line_len] = '\0';
+
+            if (res->header.status_line == NULL) {
+                /* header status line */
+                res->header.status_line = strdup(line);
+            } else {
+                /* header field line */
+                value = line;
+                key = strtok_r(line, ":", &value);
+                if (value[0] == ' ')
+                    value++;    /* step past the space after `:` */
+                hashmap_add(&res->header.fields, key, value);
+            }
+
+            bufcur = line_end + 2;
+        } while (line_end != header_end);
+
+        free(line);
+
+        nunparsed = buf + buflen - bufcur;
+
+        if (line_end == NULL) {
+            /* Remaining buffer is a partial header line */
+            nunparsed = buf + buflen - bufcur;
+            strncpy(buf, bufcur, nunparsed);
+        } else if (line_end == header_end) {
+            /* Header complete - if buffer remaining, it's content */
+            res->header.complete = true;
+            bufcur += 2;        /* step over final \r\n */
+            nunparsed = 0;      /* parse all the content */
+            res->content_offset = res->raw_len + bufcur - buf;
+        } else {
+            /* Buffer ended at complete header line but header not complete */
+            if (nunparsed)
+                return -1;      /* if anything left, response is malformed */
+        }
+    }
+
+    /* Copy into response raw buffer */
+    res->raw = realloc(res->raw, res->raw_buffer_sz + buflen - nunparsed + 1);
+    memcpy(res->raw + res->raw_buffer_sz, buf, buflen - nunparsed);
+    res->raw[res->raw_buffer_sz + buflen - nunparsed] = '\0';
+    res->raw_buffer_sz += buflen - nunparsed + 1;
+    res->raw_len += buflen - nunparsed;
+    if (res->content_offset)
+        res->content = res->raw + res->content_offset;
+
+    /* Check if all content received */
+    if (res->header.complete) {
+        expected_content_len = 0;
+        hashmap_get(&res->header.fields, "Content-Length", &clen);
+        if (clen != NULL) {
+            expected_content_len = atoi(clen);
+            free(clen);
+        }
+
+        header_len = res->content - res->raw;
+        actual_content_len = res->raw_len - header_len;
+        if (actual_content_len == expected_content_len)
+            res->complete = true;
+    }
+
+    return nunparsed;
+}
+
+
+void response_init(response_t *res)
+{
+    memset(res, 0, sizeof(response_t));
+    hashmap_init(&res->header.fields, 10);
 }
 
 
@@ -107,6 +191,7 @@ void response_init_from_request(request_t *req, response_t *res, int status,
     const int field_len = 100;
     char field[field_len];
 
+    response_init(res);
     status_string(status, field, field_len);
     res->header.status_line = malloc(strlen(field) + 10);
     sprintf(res->header.status_line, "%s %s", req->http_version, field);
@@ -139,8 +224,8 @@ void response_destroy(response_t *res)
 {
     if (res->header.status_line)
         free(res->header.status_line);
-    if (res->header.raw)
-        free(res->header.raw);
+    if (res->raw)
+        free(res->raw);
 
     hashmap_destroy(&res->header.fields);
 }

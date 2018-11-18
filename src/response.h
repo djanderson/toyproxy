@@ -1,6 +1,7 @@
 #ifndef RESPONSE_H
 #define RESPONSE_H
 
+#include <stdio.h>              /* sscanf */
 #include <stdlib.h>             /* size_t */
 
 #include "hashmap.h"
@@ -11,26 +12,29 @@
 /* XXX: consider - consolidate into http.h and call http_header_t */
 typedef struct response_header {
     bool complete;              /* parser read to end-of-header empty line */
-    char *raw;                  /* raw response header buffer or NULL */
-    size_t raw_buffer_sz;       /* size of the raw buffer */
-    size_t raw_sz;              /* number of bytes of content in raw buffer */
     char *status_line;          /* value of Status-Line */
     hashmap_t fields;           /* a map of header key: value pairs */
 } response_header_t;
 
 typedef struct response {
     bool complete;              /* indicates response completely received */
+    char *raw;                  /* raw response header buffer or NULL */
+    size_t raw_buffer_sz;       /* size of allocated raw buffer */
+    size_t raw_len;             /* number of bytes in raw buffer */
     response_header_t header;   /* header struct */
-    char *content;              /* content or NULL */
+    request_t *request;         /* request this response corresponds to */
+    char *content;              /* ptr to start of content in raw or NULL */
+    size_t content_offset;      /* used to reset content ptr if raw moved */
 } response_t;
 
+/* Basic response initialization. */
+void response_init(response_t *res);
+/* Initialize a response directly from webproxy to a given request. */
 void response_init_from_request(request_t *req, response_t *res, int status,
                                 const char *ctype, size_t clen);
 void response_destroy(response_t *res);
 /* Return number of bytes not consumed if successful or -1 for error. */
 int response_deserialize(response_t *res, char *buf, size_t buflen);
-/* Return -1 for parse error or 0 for success. */
-int response_deserialize_line(response_t *res, const char *line);
 /*
  * Serialize a response into a character buffer.
  *
@@ -53,6 +57,17 @@ int response_serialize(response_t *res, char **buf, size_t *buflen);
  * E.g., 404 -> "404 Not Found"
  */
 char *status_string(int status, char *buf, size_t buflen);
+
+/* Return true if response code is 200, else false. */
+static inline bool response_ok(response_t *res)
+{
+    const char expected_code[] = "200";
+    char actual_code[3];
+
+    sscanf(res->header.status_line, "%3s", actual_code);
+
+    return strncmp(expected_code, actual_code, 3);
+}
 
 
 #endif  /* RESPONSE_H */

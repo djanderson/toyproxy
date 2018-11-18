@@ -51,5 +51,15 @@ int hashmap_del(hashmap_t *map, const char *key);
 /* Garbage collect entries older then `timeout` seconds old. */
 void hashmap_gc(hashmap_t *map);
 
+static inline bool hashmap_has_key(hashmap_t *map, const char *key)
+{
+    return hashmap_get(map, key, NULL) > 0;
+}
+
+static inline bool hashmap_empty(hashmap_t *map)
+{
+    return map->size == 0;
+}
+
 
 #endif  /* HASHMAP_H */
