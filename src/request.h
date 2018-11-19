@@ -45,19 +45,19 @@ int request_deserialize_line(request_t *req, const char *line);
 int request_lookup_host(request_t *req);
 
 
-static inline bool request_method_is_get(request_t *req)
+static inline bool request_method_is_get(const request_t *req)
 {
     return !strcmp(req->method, "GET");
 }
 
 
-static inline bool request_method_is_post(request_t *req)
+static inline bool request_method_is_post(const request_t *req)
 {
     return !strcmp(req->method, "POST");
 }
 
 
-static inline bool request_path_is_dir(request_t *req)
+static inline bool request_path_is_dir(const request_t *req)
 {
     char *c = req->url->path;
 
@@ -68,13 +68,13 @@ static inline bool request_path_is_dir(request_t *req)
 }
 
 
-static inline bool request_version_is_1_1(request_t *req)
+static inline bool request_version_is_1_1(const request_t *req)
 {
     return !strcasecmp(req->http_version, "HTTP/1.1");
 }
 
 
-static inline bool request_conn_is_keepalive(request_t *req)
+static inline bool request_conn_is_keepalive(const request_t *req)
 {
     return ((req->connection == NULL && request_version_is_1_1(req)) ||
             (req->connection && !strcasecmp(req->connection, "keep-alive")));

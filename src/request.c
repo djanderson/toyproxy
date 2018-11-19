@@ -35,7 +35,7 @@ int request_read(request_t *req)
         if (nrecvd == 0 && nunparsed == REQ_BUFLEN) {
             return 431;         /* Request Header Fields Too Large Error */
         } else if (nrecvd == -1) {
-            printl(LOG_WARN "read - %s\n", strerror(errno));
+            printl(LOG_WARN "request read - %s\n", strerror(errno));
             return 500;         /* Internal Server Error */
         }
 

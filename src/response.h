@@ -30,8 +30,8 @@ typedef struct response {
 /* Basic response initialization. */
 void response_init(response_t *res);
 /* Initialize a response directly from webproxy to a given request. */
-void response_init_from_request(request_t *req, response_t *res, int status,
-                                const char *ctype, size_t clen);
+void response_init_from_request(const request_t *req, response_t *res,
+                                int status, const char *ctype, size_t clen);
 /* Read socket and build response. */
 int response_read(response_t *res, int fd);
 /* Free response memory. */
@@ -62,7 +62,7 @@ int response_serialize(response_t *res, char **buf, size_t *buflen);
 char *status_string(int status, char *buf, size_t buflen);
 
 /* Return true if response code is 200, else false. */
-static inline bool response_ok(response_t *res)
+static inline bool response_ok(const response_t *res)
 {
     const char expected_code[] = "200";
     char actual_code[3];

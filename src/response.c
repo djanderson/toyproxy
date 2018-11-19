@@ -49,7 +49,7 @@ int response_read(response_t *res, int fd)
         if (nrecvd == 0 && nunparsed == RES_BUFLEN) {
             return 431;         /* Response Header Fields Too Large Error */
         } else if (nrecvd == -1) {
-            printl(LOG_WARN "read - %s\n", strerror(errno));
+            printl(LOG_WARN "response read - %s\n", strerror(errno));
             return 500;         /* Internal Server Error */
         }
 
@@ -228,8 +228,8 @@ void response_init(response_t *res)
 }
 
 
-void response_init_from_request(request_t *req, response_t *res, int status,
-                                const char *ctype, size_t clen)
+void response_init_from_request(const request_t *req, response_t *res,
+                                int status, const char *ctype, size_t clen)
 {
     const int field_len = 100;
     char field[field_len];

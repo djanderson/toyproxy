@@ -290,12 +290,17 @@ void *handle_connection(void *fd_vptr)
                 if (rval >= 100 && rval <= 599)
                     send_error(&req, rval); /* send error back to requester */
 
+                close(req.server_fd);
+                response_destroy(&res);
                 break;
             }
 
             /* Write response to requester */
             printl(LOG_DEBUG "Forward response from %s to %s\n", req.url->host, req.ip);
             write(req.client_fd, res.raw, res.raw_len);
+
+            close(req.server_fd);
+            response_destroy(&res);
 
             /* TODO - if response is 200 - cache file */
 
