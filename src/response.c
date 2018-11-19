@@ -65,22 +65,25 @@ int response_read(response_t *res, int fd)
 int response_serialize(response_t *res, char **buf, size_t *buflen)
 {
     int rval;
-    char *status, *server, *date, *connection, *content_type, *content_length;
+    char *status, *server, *date, *conn, *content_type, *content_length;
     int clen = 0;
     size_t nbytes = 0;
 
     status = res->header.status_line;
     hashmap_get(&res->header.fields, "Date", &date);
     hashmap_get(&res->header.fields, "Server", &server);
-    hashmap_get(&res->header.fields, "Connection", &connection);
+    hashmap_get(&res->header.fields, "Conn", &conn);
     hashmap_get(&res->header.fields, "Content-Type", &content_type);
     hashmap_get(&res->header.fields, "Content-Length", &content_length);
+
+    if (conn == NULL)
+        conn = strdup("close");
 
     /* Precalculate size of response header (line + 2 for \r\n) */
     nbytes += strlen(status) + 2;
     nbytes += strlen(server) + 2;
     nbytes += strlen(date) + 2;
-    nbytes += strlen(connection) + 2;
+    nbytes += strlen(conn) + 2;
     if (content_type)
         nbytes += strlen(content_type) + 2;
     if (content_length) {
@@ -94,7 +97,7 @@ int response_serialize(response_t *res, char **buf, size_t *buflen)
     *buf = malloc(nbytes);
     if (*buf) {
         /* Build response buffer */
-        sprintf("%s\r\n%s\r\n%s\r\n%s\r\n", status, server, date, connection);
+        sprintf(*buf, "%s\r\n%s\r\n%s\r\n%s\r\n", status, server, date, conn);
         if (content_type) {
             strcat(*buf, content_type);
             strcat(*buf, "\r\n");
@@ -118,7 +121,7 @@ int response_serialize(response_t *res, char **buf, size_t *buflen)
     /* Clean up */
     free(date);
     free(server);
-    free(connection);
+    free(conn);
     free(content_type);
     free(content_length);
 

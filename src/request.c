@@ -131,8 +131,9 @@ int request_lookup_host(request_t *req)
     struct in_addr ip_addr;
 
     if (inet_aton(req->url->host, &ip_addr) == 1) {
+        /* Host is already an ip address */
         req->url->ip = strdup(req->url->host);
-        return 1;               /* host is already an ip address */
+        return 1;
     }
 
     if (hashmap_get(&hostname_cache, req->url->host, &ip) != -1) {
@@ -165,6 +166,7 @@ void request_init(request_t *req, int fd, const struct sockaddr_in *addr)
     req->client_fd = fd;
     memcpy(req->ip, ip, INET_ADDRSTRLEN);
     req->url = malloc(sizeof(url_t));
+    memset(req->url, 0, sizeof(url_t));
 }
 
 
@@ -179,7 +181,8 @@ void request_destroy(request_t *req)
     if (req->content_length)
         free(req->content_length);
     if (req->url) {
-        url_destroy(req->url);
+        if (req->url->full)     /* verify url initialized */
+            url_destroy(req->url);
         free(req->url);
     }
 }

@@ -1,6 +1,7 @@
 #ifndef URLPARSE_H
 #define URLPARSE_H
 
+
 typedef struct url {
     char *full;                 /* the original input string */
     char *scheme;               /* e.g., http */
