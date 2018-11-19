@@ -94,8 +94,16 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
     size_t nunparsed, line_len, line_buffer_sz;
     size_t header_len, expected_content_len, actual_content_len;
 
+    /* Copy response into raw buffer */
+    res->raw = realloc(res->raw, res->raw_len + buflen + 1);
+    memcpy(res->raw + res->raw_len, buf, buflen);
+    res->raw[res->raw_len + buflen] = '\0';
+    res->raw_buffer_sz = res->raw_len + buflen + 1;
+    res->raw_len += buflen;
+
     nunparsed = 0;
 
+    /* Parse header */
     if (!res->header.complete) {
         line_buffer_sz = 100;
         line = malloc(line_buffer_sz);
@@ -136,13 +144,13 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
         if (line_end == NULL) {
             /* Remaining buffer is a partial header line */
             nunparsed = buf + buflen - bufcur;
-            strncpy(buf, bufcur, nunparsed);
+            res->raw_len -= nunparsed;
         } else if (line_end == header_end) {
             /* Header complete - if buffer remaining, it's content */
             res->header.complete = true;
             bufcur += 2;        /* step over final \r\n */
             nunparsed = 0;      /* parse all the content */
-            res->content_offset = res->raw_len + bufcur - buf;
+            res->content_offset = res->raw_len - (buf + buflen - bufcur);
         } else {
             /* Buffer ended at complete header line but header not complete */
             if (nunparsed)
@@ -150,14 +158,9 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
         }
     }
 
-    /* Copy into response raw buffer */
-    res->raw = realloc(res->raw, res->raw_buffer_sz + buflen - nunparsed + 1);
-    memcpy(res->raw + res->raw_buffer_sz, buf, buflen - nunparsed);
-    res->raw[res->raw_buffer_sz + buflen - nunparsed] = '\0';
-    res->raw_buffer_sz += buflen - nunparsed + 1;
-    res->raw_len += buflen - nunparsed;
-    if (res->content_offset)
-        res->content = res->raw + res->content_offset;
+    /* Reset input buffer to hold only unparsed content */
+    memcpy(buf, bufcur, nunparsed);
+    memset(buf + nunparsed, 0, buflen - nunparsed);
 
     /* Check if all content received */
     if (res->header.complete) {
@@ -168,6 +171,7 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
             free(clen);
         }
 
+        res->content = res->raw + res->content_offset;
         header_len = res->content - res->raw;
         actual_content_len = res->raw_len - header_len;
         if (actual_content_len == expected_content_len)

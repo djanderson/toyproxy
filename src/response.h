@@ -9,7 +9,7 @@
 
 #define RES_BUFLEN 8000
 
-/* XXX: consider - consolidate into http.h and call http_header_t */
+
 typedef struct response_header {
     bool complete;              /* parser read to end-of-header empty line */
     char *status_line;          /* value of Status-Line */

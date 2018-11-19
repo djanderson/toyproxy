@@ -4,7 +4,7 @@
 
 
 response_t res;
-char *test_raw_response, *test_raw_response_saveptr;
+char test_raw_response[181];
 
 const int response_length = 180;
 const char raw_response[] =
@@ -20,15 +20,13 @@ const char raw_response[] =
 
 void setUp()
 {
+    memset(test_raw_response, 0, 181);
     response_init(&res);
-    test_raw_response = strdup(raw_response);
-    test_raw_response_saveptr = test_raw_response; /* hold for free */
 }
 
 
 void tearDown()
 {
-    free(test_raw_response_saveptr);
     response_destroy(&res);
 }
 
@@ -37,7 +35,7 @@ static void verify_response()
 {
     char *date, *server, *clen, *conn, *ctype;
 
-    TEST_ASSERT_TRUE(res.header.complete);
+    TEST_ASSERT_TRUE_MESSAGE(res.header.complete, "Header not complete");
     TEST_ASSERT_EQUAL_STRING("HTTP/1.1 200 OK", res.header.status_line);
 
     hashmap_get(&res.header.fields, "Date", &date);
@@ -49,7 +47,7 @@ static void verify_response()
     free(server);
 
     hashmap_get(&res.header.fields, "Content-Length", &clen);
-    TEST_ASSERT_EQUAL(39, atoi(clen));
+    TEST_ASSERT_EQUAL_INT(39, atoi(clen));
     free(clen);
 
     hashmap_get(&res.header.fields, "Connection", &conn);
@@ -60,7 +58,8 @@ static void verify_response()
     TEST_ASSERT_EQUAL_STRING("text/html", ctype);
     free(ctype);
 
-    TEST_ASSERT_TRUE(res.complete);
+    TEST_ASSERT_TRUE_MESSAGE(res.complete, "Response not complete");
+    TEST_ASSERT_EQUAL_STRING(raw_response, res.raw);
     TEST_ASSERT_EQUAL_STRING("<html><body><h1>Test</h1></body></html>",
                              res.content);
 }
@@ -71,6 +70,7 @@ void test_response_deserialize_whole()
 {
     int nunparsed;
 
+    strcpy(test_raw_response, raw_response);
     nunparsed = response_deserialize(&res, test_raw_response, response_length);
     TEST_ASSERT_EQUAL_INT(0, nunparsed);
     verify_response();
@@ -80,6 +80,7 @@ void test_response_deserialize_whole()
 /* Test the response_ok helper function. */
 void test_response_ok()
 {
+    strcpy(test_raw_response, raw_response);
     response_deserialize(&res, test_raw_response, response_length);
     TEST_ASSERT_TRUE(response_ok(&res));
 }
@@ -88,21 +89,58 @@ void test_response_ok()
 /* Test that parse of response split at partial header line succeeds. */
 void test_split_response_partial_header_line()
 {
+    int nunparsed;
 
+    /* Copy up to "...Server: Apache\r\nContent-Le" */
+    strncpy(test_raw_response, raw_response, 80);
+    nunparsed = response_deserialize(&res, test_raw_response, 80);
+    TEST_ASSERT_EQUAL_INT(10, nunparsed);
+    TEST_ASSERT_EQUAL_STRING("Content-Le", test_raw_response);
+
+    /* Place the rest of the response in the buffer */
+    strcat(test_raw_response, &raw_response[80]);
+    nunparsed = response_deserialize(&res, test_raw_response, 100 + nunparsed);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    verify_response();
 }
 
 
 /* Test that parse of response split at full header line succeeds. */
 void test_split_response_full_header_line()
 {
+    int nunparsed;
 
+    /* Copy up to "...Content-Length: 39\r\n" */
+    strncpy(test_raw_response, raw_response, 90);
+    nunparsed = response_deserialize(&res, test_raw_response, 90);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    /* Place the rest of the response in the buffer */
+    strcat(test_raw_response, &raw_response[90]);
+    nunparsed = response_deserialize(&res, test_raw_response, 90);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    verify_response();
 }
 
 
 /* Test that parse of response split at end of complete header succeeds. */
 void test_split_response_complete_header()
 {
+    int nunparsed;
 
+    /* Copy up to "...Content-Type: text/html\r\n\r\n" */
+    strncpy(test_raw_response, raw_response, 141);
+    nunparsed = response_deserialize(&res, test_raw_response, 141);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    /* Place the rest of the response in the buffer */
+    strcat(test_raw_response, &raw_response[141]);
+    nunparsed = response_deserialize(&res, test_raw_response, 39);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    verify_response();
 }
 
 
@@ -110,9 +148,20 @@ void test_split_response_complete_header()
 /* Test that parse of response split at partial content succeeds. */
 void test_split_response_partial_content()
 {
+    int nunparsed;
 
+    /* Copy up to "...Content-Type: text/html\r\n\r\n" */
+    strncpy(test_raw_response, raw_response, 157);
+    nunparsed = response_deserialize(&res, test_raw_response, 157);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    /* Place the rest of the response in the buffer */
+    strcat(test_raw_response, &raw_response[157]);
+    nunparsed = response_deserialize(&res, test_raw_response, 23);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+
+    verify_response();
 }
-
 
 
 int main()
@@ -121,6 +170,10 @@ int main()
 
     RUN_TEST(test_response_deserialize_whole);
     RUN_TEST(test_response_ok);
+    RUN_TEST(test_split_response_partial_header_line);
+    RUN_TEST(test_split_response_full_header_line);
+    RUN_TEST(test_split_response_complete_header);
+    RUN_TEST(test_split_response_partial_content);
 
     return UNITY_END();
 }

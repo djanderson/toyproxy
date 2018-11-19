@@ -282,7 +282,6 @@ void *handle_connection(void *fd_vptr)
 
         strcpy(requested_file_path, PROXY_ROOT);
 
-        /* XXX */
         char *path = malloc(strlen(req.url->path + 3));
         if (request_method_is_get(&req)) {
             if (hashmap_get(&file_cache, req.url->path, (char **) &path) != -1) {
@@ -292,8 +291,30 @@ void *handle_connection(void *fd_vptr)
                 }
             }
 
-            /* TODO - open socket to req.url->host:req.url->port */
-            /* TODO - sent FULL request to above */
+            /* Open socket to req.url->host:req.url->port */
+            int sock;
+            struct sockaddr_in server;
+
+            /* FIXME printf etc */
+            sock = socket(AF_INET , SOCK_STREAM , 0);
+            if (sock == -1) {
+                printf("Could not create socket");
+            }
+            puts("Socket created");
+
+            server.sin_addr.s_addr = inet_addr(req.url->host);
+            server.sin_family = AF_INET;
+            server.sin_port = htons(req.url->port);
+
+            /* Connect to remote server */
+            /* FIXME: perror */
+            if (connect(sock , (struct sockaddr *)&server , sizeof(server)) < 0) {
+                perror("connect failed. Error");
+            }
+
+            /* Send FULL request to above */
+            /* write(req.raw, ); */
+
             /* TODO - read response from remote */
             /* TODO - write response to requester */
             /* TODO - if response is 200 - cache file */
@@ -361,6 +382,7 @@ int send_file(request_t *req, char *path)
     size_t resbuflen, clen;
     FILE *file;
     char *fileext;
+    char filebuf[RES_BUFLEN] = "";
     const char *ctype;
     int ntotal = 0, nsend, nsent;
 
@@ -403,13 +425,10 @@ int send_file(request_t *req, char *path)
     printl(msg, req->client_fd, req->ip, path + 6, ctype, clen);
 
     /* Send body */
-    /* FIXME */
-    /*
-     * while ((nsend = fread(buf, 1, RES_BUFLEN, file))) {
-     *     nsent = write(req->client_fd, buf, nsend);
-     *     ntotal+= nsent;
-     * }
-     */
+    while ((nsend = fread(filebuf, 1, RES_BUFLEN, file))) {
+        nsent = write(req->client_fd, filebuf, nsend);
+        ntotal+= nsent;
+    }
 
     response_destroy(&res);
     fclose(file);
@@ -421,18 +440,16 @@ int send_file(request_t *req, char *path)
 int send_error(request_t *req, int status)
 {
     response_t res;
-    char buf[RES_BUFLEN] = "";
-    int nsent, buflen;
+    char *resbuf;
+    size_t resbuflen;
+    int nsent;
 
     printl(LOG_INFO "(%d) -> %s %d\n", req->client_fd, req->ip, status);
 
-    /* FIXME */
-    /*
-     * response_init(req, &res, status, NULL, 0);
-     * buflen = response_serialize(&res, buf, RES_BUFLEN);
-     * if ((nsent = write(req->client_fd, buf, buflen)) < 0)
-     *     printl(LOG_WARN "Socket write failed - %s\n", strerror(errno));
-     */
+    response_init_from_request(req, &res, status, NULL, 0);
+    response_serialize(&res, &resbuf, &resbuflen);
+    if ((nsent = write(req->client_fd, resbuf, resbuflen)) < 0)
+        printl(LOG_WARN "Socket write failed - %s\n", strerror(errno));
 
     response_destroy(&res);
     return nsent;

@@ -17,6 +17,13 @@ int request_deserialize(request_t *req, char *buf, size_t buflen)
     char *saveptr;
     const char delim[] = "\r\n";
 
+    /* Copy request into raw buffer */
+    req->raw = realloc(req->raw, req->raw_len + buflen + 1);
+    memcpy(req->raw + req->raw_len, buf, buflen);
+    req->raw[req->raw_len + buflen] = '\0';
+    req->raw_buffer_sz = req->raw_len + buflen + 1;
+    req->raw_len += buflen;
+
     last_line_partial = (buflen > 2 && strcmp(buf + buflen - 2, "\r\n") != 0);
     req->complete = (buflen > 4 && strcmp(buf + buflen - 4, "\r\n\r\n") == 0);
 
@@ -34,9 +41,12 @@ int request_deserialize(request_t *req, char *buf, size_t buflen)
 
     if (last_line_partial) {
         nunparsed = strlen(previous_line);
-        strcpy((char *)tmpbuf, previous_line);
+        req->raw_len -= nunparsed;
+        strcpy((char *)tmpbuf, previous_line); /* TODO - can I do this w/o tmpbuf? */
         strcpy(buf, (char *)tmpbuf);
         return nunparsed;
+    } else {
+        memset(buf, 0, buflen);
     }
 
     return 0;
@@ -110,16 +120,12 @@ int request_lookup_host(request_t *req)
 
 void request_init(request_t *req, int fd, const struct sockaddr_in *addr)
 {
+    memset(req, 0, sizeof(request_t));
     char *ip =  malloc(INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &(addr->sin_addr), ip, INET_ADDRSTRLEN);
     req->client_fd = fd;
     memcpy(req->ip, ip, INET_ADDRSTRLEN);
-    req->complete = 0;
-    req->method = NULL;
     req->url = malloc(sizeof(url_t));
-    req->http_version = NULL;
-    req->connection = NULL;
-    req->content_length = NULL;
 }
 
 

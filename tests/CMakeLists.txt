@@ -8,11 +8,19 @@ add_executable(test_response
   ../src/printl.c
   ../src/hashmap.c
   test_response.c)
+add_executable(test_request
+  ../src/request.c
+  ../src/printl.c
+  ../src/url.c
+  ../src/hashmap.c
+  test_request.c)
 
 target_link_libraries(test_url unity)
 target_link_libraries(test_hashmap unity Threads::Threads)
 target_link_libraries(test_response unity Threads::Threads)
+target_link_libraries(test_request unity Threads::Threads)
 
 add_test(test_url test_url)
 add_test(test_hashmap test_hashmap)
 add_test(test_response test_response)
+add_test(test_request test_request)
