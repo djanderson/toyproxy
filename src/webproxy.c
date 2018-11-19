@@ -201,49 +201,11 @@ int proxy(int ssock)
 }
 
 
-int build_request(request_t *req)
-{
-    int nrecv, nrecvd, nunparsed;
-    char reqbuf[REQ_BUFLEN] = "";
-
-    nunparsed = 0;
-    nrecv = REQ_BUFLEN;
-    while ((nrecvd = read(req->client_fd, reqbuf + nunparsed, nrecv)) > 0) {
-        reqbuf[nunparsed + nrecvd] = '\0';
-        nunparsed = request_deserialize(req, reqbuf, nunparsed + nrecvd);
-        if (nunparsed < 0) {
-            send_error(req, 400);
-            return 1;
-        }
-        nrecv = REQ_BUFLEN - nunparsed;
-        if (req->complete) {
-            printl(LOG_DEBUG "Request complete\n");
-            break;
-        }
-    }
-
-    if (nrecvd <= 0) {
-        printl(LOG_DEBUG "Connection closed\n");
-        if (nrecvd == 0 && nunparsed == REQ_BUFLEN) {
-            send_error(req, 431);
-        } else if (nrecvd == -1) {
-            printl(LOG_WARN "read - %s\n", strerror(errno));
-            send_error(req, 500);
-        }
-
-        return 1;
-    }
-
-    assert(req->complete);
-
-    return 0;
-}
-
-
 void *handle_connection(void *fd_vptr)
 {
     int fd = *(int *)fd_vptr;
     request_t req = {0};
+    response_t res = {0};
     struct sockaddr_in peer_addr;
     socklen_t addr_len = sizeof(peer_addr);
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
@@ -266,8 +228,12 @@ void *handle_connection(void *fd_vptr)
         request_destroy(&req);  /* safe to call on uninit'd req struct */
         request_init(&req, fd, &peer_addr);
 
-        if (build_request(&req) != 0)
+        if ((rval = request_read(&req) != 0)) {
+            if (rval >= 100 && rval <= 599)
+                send_error(&req, rval);
+
             break;
+        }
 
         keepalive = request_conn_is_keepalive(&req);
 
@@ -292,31 +258,45 @@ void *handle_connection(void *fd_vptr)
             }
 
             /* Open socket to req.url->host:req.url->port */
-            int sock;
             struct sockaddr_in server;
 
-            /* FIXME printf etc */
-            sock = socket(AF_INET , SOCK_STREAM , 0);
-            if (sock == -1) {
-                printf("Could not create socket");
+            req.server_fd = socket(AF_INET, SOCK_STREAM, 0);
+            if (req.server_fd == -1) {
+                printl(LOG_ERR "socket - %s", strerror(errno));
+                break;
             }
-            puts("Socket created");
+            printl(LOG_DEBUG "Socket opened for %s\n", req.url->host);
 
-            server.sin_addr.s_addr = inet_addr(req.url->host);
+            server.sin_addr.s_addr = inet_addr(req.url->ip);
             server.sin_family = AF_INET;
             server.sin_port = htons(req.url->port);
 
             /* Connect to remote server */
-            /* FIXME: perror */
-            if (connect(sock , (struct sockaddr *)&server , sizeof(server)) < 0) {
-                perror("connect failed. Error");
+            if (connect(req.server_fd, (struct sockaddr *)&server , sizeof(server)) < 0) {
+                printl(LOG_ERR "connect - %s", strerror(errno));
+                break;
             }
+            printl(LOG_DEBUG "Socket connected to %s\n", req.url->host);
 
             /* Send FULL request to above */
-            /* write(req.raw, ); */
+            printl(LOG_DEBUG "Forwarding request to %s\n", req.url->host);
+            write(req.server_fd, req.raw, req.raw_len);
 
-            /* TODO - read response from remote */
-            /* TODO - write response to requester */
+            response_init(&res);
+
+            /* Read response from remote */
+            printl(LOG_DEBUG "Waiting for response from %s\n", req.url->host);
+            if ((rval = response_read(&res, req.server_fd) != 0)) {
+                if (rval >= 100 && rval <= 599)
+                    send_error(&req, rval); /* send error back to requester */
+
+                break;
+            }
+
+            /* Write response to requester */
+            printl(LOG_DEBUG "Forward response from %s to %s\n", req.url->host, req.ip);
+            write(req.client_fd, res.raw, res.raw_len);
+
             /* TODO - if response is 200 - cache file */
 
         } else {

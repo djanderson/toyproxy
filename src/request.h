@@ -19,7 +19,7 @@ typedef struct request {
     char *raw;                  /* raw request buffer */
     size_t raw_len;             /*  */
     size_t raw_buffer_sz;       /* size of the raw buffer */
-    char *ip[INET_ADDRSTRLEN];  /* ip address of the server */
+    char ip[INET_ADDRSTRLEN];   /* ip address of the server */
     char *method;               /* request method (e.g., GET) */
     url_t *url;                 /* parsed url struct */
     char *http_version;         /* status line HTTP version (e.g., HTTP/1.1) */
@@ -31,6 +31,8 @@ hashmap_t hostname_cache;
 
 void request_init(request_t *req, int fd, const struct sockaddr_in *addr);
 void request_destroy(request_t *req);
+/* Read socket and build request, returning 0 for success or an error code. */
+int request_read(request_t *req);
 /* Return 0 if successful or -1 for error. */
 int request_deserialize(request_t *req, char *buf, size_t buflen);
 /* Return -1 for parse error or 0 for success. */

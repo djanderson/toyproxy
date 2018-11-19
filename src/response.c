@@ -4,6 +4,7 @@
 #include <stdlib.h>             /* size_t */
 #include <string.h>             /* memset, str* */
 #include <time.h>               /* gmtime */
+#include <unistd.h>             /* read */
 
 #include "printl.h"
 #include "request.h"
@@ -21,6 +22,44 @@ const char response_client_error_405[] = "405 Method Not Allowed";
 const char response_client_error_431[] = "431 Request Header Fields Too Large";
 const char response_server_error_500[] = "500 Internal Server Error";
 const char error_500[] = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+
+
+int response_read(response_t *res, int fd)
+{
+    int nrecv, nrecvd, nunparsed;
+    char resbuf[RES_BUFLEN] = "";
+
+    nunparsed = 0;
+    nrecv = RES_BUFLEN;
+    while ((nrecvd = read(fd, resbuf + nunparsed, nrecv)) > 0) {
+        resbuf[nunparsed + nrecvd] = '\0';
+        nunparsed = response_deserialize(res, resbuf, nunparsed + nrecvd);
+        if (nunparsed < 0) {
+            return 400;         /* Bad Response Error */
+        }
+        nrecv = RES_BUFLEN - nunparsed;
+        if (res->complete) {
+            printl(LOG_DEBUG "Response complete\n");
+            break;
+        }
+    }
+
+    if (nrecvd <= 0) {
+        printl(LOG_DEBUG "Connection closed\n");
+        if (nrecvd == 0 && nunparsed == RES_BUFLEN) {
+            return 431;         /* Response Header Fields Too Large Error */
+        } else if (nrecvd == -1) {
+            printl(LOG_WARN "read - %s\n", strerror(errno));
+            return 500;         /* Internal Server Error */
+        }
+
+        return 1;               /* just signal connection closed */
+    }
+
+    assert(res->complete);
+
+    return 0;
+}
 
 
 int response_serialize(response_t *res, char **buf, size_t *buflen)

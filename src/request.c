@@ -1,10 +1,51 @@
 #include <arpa/inet.h>          /* inet_addr */
+#include <assert.h>             /* assert */
+#include <errno.h>              /* errno */
 #include <netdb.h>              /* gethostbyname */
 #include <string.h>             /* str* */
 #include <sys/socket.h>         /* struct sockaddr */
+#include <unistd.h>             /* read */
 
 #include "printl.h"
 #include "request.h"
+
+
+int request_read(request_t *req)
+{
+    int nrecv, nrecvd, nunparsed;
+    char reqbuf[REQ_BUFLEN] = "";
+
+    nunparsed = 0;
+    nrecv = REQ_BUFLEN;
+    while ((nrecvd = read(req->client_fd, reqbuf + nunparsed, nrecv)) > 0) {
+        reqbuf[nunparsed + nrecvd] = '\0';
+        nunparsed = request_deserialize(req, reqbuf, nunparsed + nrecvd);
+        if (nunparsed < 0) {
+            return 400;         /* Bad Request Error */
+        }
+        nrecv = REQ_BUFLEN - nunparsed;
+        if (req->complete) {
+            printl(LOG_DEBUG "Request complete\n");
+            break;
+        }
+    }
+
+    if (nrecvd <= 0) {
+        printl(LOG_DEBUG "Connection closed\n");
+        if (nrecvd == 0 && nunparsed == REQ_BUFLEN) {
+            return 431;         /* Request Header Fields Too Large Error */
+        } else if (nrecvd == -1) {
+            printl(LOG_WARN "read - %s\n", strerror(errno));
+            return 500;         /* Internal Server Error */
+        }
+
+        return 1;               /* just signal connection closed */
+    }
+
+    assert(req->complete);
+
+    return 0;
+}
 
 
 int request_deserialize(request_t *req, char *buf, size_t buflen)
@@ -12,7 +53,6 @@ int request_deserialize(request_t *req, char *buf, size_t buflen)
     bool last_line, last_line_partial;
     int nunparsed;
     char *line, *previous_line;
-    char *tmpbuf[REQ_BUFLEN + 1];
     char *orig_buf = buf;
     char *saveptr;
     const char delim[] = "\r\n";
@@ -42,8 +82,7 @@ int request_deserialize(request_t *req, char *buf, size_t buflen)
     if (last_line_partial) {
         nunparsed = strlen(previous_line);
         req->raw_len -= nunparsed;
-        strcpy((char *)tmpbuf, previous_line); /* TODO - can I do this w/o tmpbuf? */
-        strcpy(buf, (char *)tmpbuf);
+        strncpy(buf, previous_line, buflen);
         return nunparsed;
     } else {
         memset(buf, 0, buflen);

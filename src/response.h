@@ -32,6 +32,9 @@ void response_init(response_t *res);
 /* Initialize a response directly from webproxy to a given request. */
 void response_init_from_request(request_t *req, response_t *res, int status,
                                 const char *ctype, size_t clen);
+/* Read socket and build response. */
+int response_read(response_t *res, int fd);
+/* Free response memory. */
 void response_destroy(response_t *res);
 /* Return number of bytes not consumed if successful or -1 for error. */
 int response_deserialize(response_t *res, char *buf, size_t buflen);
