@@ -61,12 +61,14 @@ void *handle_connection(void *fd_vptr);
 void *handle_request(void *queue_vptr);
 /* Send an HTTP error response (no body). */
 int send_error(request_t *req, int status);
+/* Save a response's content in at `path`. */
+int save_cache_file(response_t *res, char *path);
 /* Send an HTTP response including the file at `path'. */
-int send_file(request_t *req, char *path);
+int send_cache_file(request_t *req, char *path);
 /* Handle cache timeout. */
 void *cache_gc(void *cache_vptr);
-/* `path' must be allocated with at least size strlen(url->path) + 3. */
-void url_to_cache_path(const url_t *url, char *path);
+/* Return heap-allocated string that the user must free. */
+char *url_to_cache_path(const url_t *url);
 
 
 int main(int argc, char *argv[])
@@ -206,6 +208,7 @@ void *handle_connection(void *fd_vptr)
     int fd = *(int *)fd_vptr;
     request_t req = {0};
     response_t res = {0};
+    char *path;
     struct sockaddr_in peer_addr;
     socklen_t addr_len = sizeof(peer_addr);
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
@@ -247,11 +250,14 @@ void *handle_connection(void *fd_vptr)
                req.url->full);
 
         strcpy(requested_file_path, PROXY_ROOT);
+        strcpy(requested_file_path, req.url->host);
+        strcpy(requested_file_path, req.url->path);
 
-        char *path = malloc(strlen(req.url->path + 3));
         if (request_method_is_get(&req)) {
-            if (hashmap_get(&file_cache, req.url->path, (char **) &path) != -1) {
-                if (send_file(&req, path) < 0) {
+            if (hashmap_get(&file_cache, req.url->full, (char **) &path) != -1) {
+                rval = send_cache_file(&req, path);
+                free(path);
+                if (rval < 0) {
                     send_error(&req, 404);
                     break;
                 }
@@ -302,7 +308,18 @@ void *handle_connection(void *fd_vptr)
             close(req.server_fd);
             response_destroy(&res);
 
-            /* TODO - if response is 200 - cache file */
+            /* If response is 200 - cache file */
+            if (response_ok(&res)) {
+                /*
+                 * TODO - read response header Content-Length and pass to
+                 * save_cache_file
+                 */
+                path = url_to_cache_path(req.url);
+                /* TODO - impliment save_cache_file */
+                save_cache_file(&res, path);
+                hashmap_add(&file_cache, req.url->full, path);
+                free(path);
+            }
 
         } else {
             send_error(&req, 405);
@@ -360,7 +377,7 @@ void *handle_request(void *param)
 
 
 /* Return total bytes sent or -1. */
-int send_file(request_t *req, char *path)
+int send_cache_file(request_t *req, char *path)
 {
     response_t res;
     char *resbuf;
@@ -549,15 +566,19 @@ void *cache_gc(void *cache_vptr)
 }
 
 
-void url_to_cache_path(const url_t *url, char *path)
+char *url_to_cache_path(const url_t *url)
 {
     char *p = strdup(url->path);
+    char *cache_path = malloc(strlen(PROXY_ROOT) + strlen(url->host) +
+                              strlen(url->path) + 3);
 
     /* Replace illegal path characters */
     for (int i = 0; p[i] != '\0'; i++)
         if (p[i] == '/')
             p[i] = '_';
 
-    sprintf(path, "%s/%s/%s", PROXY_ROOT, url->host, p);
+    sprintf(cache_path, "%s/%s/%s", PROXY_ROOT, url->host, p);
     free(p);
+
+    return cache_path;
 }
