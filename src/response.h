@@ -72,5 +72,23 @@ static inline bool response_ok(const response_t *res)
     return strncmp(expected_code, actual_code, 3);
 }
 
+/* Return value of Content-Length header field or 0. */
+static inline size_t response_content_length(response_t *res)
+{
+    int len = 0;
+    char *clen;
+
+    hashmap_get(&res->header.fields, "Content-Length", &clen);
+    if (clen == NULL)
+        /* Try lower case */
+        hashmap_get(&res->header.fields, "content-length", &clen);
+
+    if (clen)
+        len = atoi(clen);
+
+    free(clen);
+
+    return len;
+}
 
 #endif  /* RESPONSE_H */
