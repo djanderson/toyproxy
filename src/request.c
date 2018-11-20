@@ -24,10 +24,8 @@ int request_read(request_t *req)
             return 400;         /* Bad Request Error */
         }
         nrecv = REQ_BUFLEN - nunparsed;
-        if (req->complete) {
-            printl(LOG_DEBUG "Request complete\n");
+        if (req->complete)
             break;
-        }
     }
 
     if (nrecvd <= 0) {
@@ -94,15 +92,14 @@ int request_deserialize(request_t *req, char *buf, size_t buflen)
 
 int request_deserialize_line(request_t *req, const char *cline)
 {
-    printl(LOG_DEBUG "Got request line: %s\n", cline);
-
     int rval = 0;
     char *key, *value, *uri;
-    char *line = strdup(cline); /* need to keep this ptr for free */
+    char *line = strdup(cline);
     value = line;
 
     if (req->method == NULL) {
         /* If status line not initialized, assume this is it */
+        printl(LOG_DEBUG "Got request: %s\n", cline);
         req->method = strdup(strsep(&value, " "));
         uri = strdup(strsep(&value, " "));
         rval = url_init(req->url, uri);

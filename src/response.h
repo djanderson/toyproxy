@@ -79,9 +79,6 @@ static inline size_t response_content_length(response_t *res)
     char *clen;
 
     hashmap_get(&res->header.fields, "Content-Length", &clen);
-    if (clen == NULL)
-        /* Try lower case */
-        hashmap_get(&res->header.fields, "content-length", &clen);
 
     if (clen)
         len = atoi(clen);

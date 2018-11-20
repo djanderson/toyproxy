@@ -38,10 +38,8 @@ int response_read(response_t *res, int fd)
             return 400;         /* Bad Response Error */
         }
         nrecv = RES_BUFLEN - nunparsed;
-        if (res->complete) {
-            printl(LOG_DEBUG "Response complete\n");
+        if (res->complete)
             break;
-        }
     }
 
     if (nrecvd <= 0) {
@@ -65,14 +63,13 @@ int response_read(response_t *res, int fd)
 int response_serialize(response_t *res, char **buf, size_t *buflen)
 {
     int rval;
-    char *status, *server, *date, *conn, *content_type, *content_length;
-    int clen = 0;
+    char *status, *server, *date, *conn, *content_type, *content_length, *fmt;
     size_t nbytes = 0;
 
     status = res->header.status_line;
     hashmap_get(&res->header.fields, "Date", &date);
     hashmap_get(&res->header.fields, "Server", &server);
-    hashmap_get(&res->header.fields, "Conn", &conn);
+    hashmap_get(&res->header.fields, "Connection", &conn);
     hashmap_get(&res->header.fields, "Content-Type", &content_type);
     hashmap_get(&res->header.fields, "Content-Length", &content_length);
 
@@ -81,35 +78,36 @@ int response_serialize(response_t *res, char **buf, size_t *buflen)
 
     /* Precalculate size of response header (line + 2 for \r\n) */
     nbytes += strlen(status) + 2;
-    nbytes += strlen(server) + 2;
-    nbytes += strlen(date) + 2;
-    nbytes += strlen(conn) + 2;
+    nbytes += 8 + strlen(server) + 2;
+    nbytes += 6 + strlen(date) + 2;
+    nbytes += 12 + strlen(conn) + 2;
     if (content_type)
-        nbytes += strlen(content_type) + 2;
+        nbytes += 14 + strlen(content_type) + 2;
     if (content_length) {
-        nbytes += strlen(content_length) + 2;
-        clen = atoi(content_length);
+        nbytes += 16 + strlen(content_length) + 2;
     }
     nbytes += 2;                /* end of header \r\n */
-    nbytes += clen;             /* response body */
 
     /* Try to allocate enough memory to serialize this response */
-    *buf = malloc(nbytes);
+    *buf = malloc(nbytes + 1);
     if (*buf) {
         /* Build response buffer */
-        sprintf(*buf, "%s\r\n%s\r\n%s\r\n%s\r\n", status, server, date, conn);
+        fmt = "%s\r\nServer: %s\r\nDate: %s\r\nConnection: %s\r\n";
+        sprintf(*buf, fmt, status, server, date, conn);
         if (content_type) {
+            strcat(*buf, "Content-Type: ");
             strcat(*buf, content_type);
             strcat(*buf, "\r\n");
         }
         if (content_length) {
+            strcat(*buf, "Content-Length: ");
             strcat(*buf, content_length);
             strcat(*buf, "\r\n");
         }
         strcat(*buf, "\r\n");       /* end of header */
-        assert(strlen(*buf) == nbytes - clen);
-        memcpy(*buf + (nbytes - clen), res->content, clen);
-        rval = nbytes;
+        assert(strlen(*buf) == nbytes);
+        *buflen = nbytes;
+        rval = 0;
     } else {
         /* Out of memory */
         printl(LOG_ERR "Error serializing response - %s\n", strerror(errno));
@@ -166,6 +164,7 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
 
             if (res->header.status_line == NULL) {
                 /* header status line */
+                printl(LOG_DEBUG "Got response: %s\n", line);
                 res->header.status_line = strdup(line);
             } else {
                 /* header field line */

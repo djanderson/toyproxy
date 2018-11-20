@@ -14,15 +14,14 @@
 #include <sys/stat.h>           /* stat, struct st */
 #include <unistd.h>             /* close, read, write */
 
-#include <openssl/md5.h>        /* MD5_* */
-
 #include "queue.h"
 #include "hashmap.h"
 #include "printl.h"
 #include "request.h"
 #include "response.h"
 
-#define PROXY_ROOT ".cache"
+#define CACHE_ROOT ".cache"
+#define DIR_PERMS 0700
 #define MAX_THREADS 15          /* Max request handler threads */
 #define MAX_BACKLOG 100         /* Max connections before ECONNREFUSED error */
 #define MAX_REQUESTS 100        /* Request queue size */
@@ -62,7 +61,7 @@ void *handle_request(void *queue_vptr);
 /* Send an HTTP error response (no body). */
 int send_error(request_t *req, int status);
 /* Save a response's content in at `path`. */
-int save_cache_file(response_t *res, char *path);
+void save_cache_file(response_t *res, char *path);
 /* Send an HTTP response including the file at `path'. */
 int send_cache_file(request_t *req, char *path);
 /* Handle cache timeout. */
@@ -77,6 +76,7 @@ int main(int argc, char *argv[])
     pthread_t cache_gc_thread;
     pthread_t threads[MAX_THREADS];
     sigset_t set;
+    struct stat st;
     struct sockaddr_in addr;
     int nthreads = sysconf(_SC_NPROCESSORS_CONF);
 
@@ -96,6 +96,11 @@ int main(int argc, char *argv[])
     hashmap_init(&hostname_cache, 100);
     hashmap_init(&file_cache, 100);
     file_cache.timeout = cache_timeout;
+    file_cache.unlinker = unlink;       /* unlink cached files on timeout */
+
+    if (stat(CACHE_ROOT, &st) == -1) {
+        mkdir(CACHE_ROOT, DIR_PERMS);
+    }
 
     /* Spawn cache timeout handler */
     if (pthread_create(&cache_gc_thread, NULL, cache_gc,
@@ -154,7 +159,7 @@ int main(int argc, char *argv[])
 
 int proxy(int ssock)
 {
-    int rval, fd, ready, on = 1;
+    int fd, ready;
     struct sockaddr_in caddr;
     socklen_t addr_sz = sizeof(struct sockaddr_in);
     fd_set readfds_master, readfds;
@@ -181,12 +186,6 @@ int proxy(int ssock)
 
             printl(LOG_DEBUG "Connection accepted on socket %d\n", fd);
 
-            rval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
-            if (rval < 0) {
-                printl(LOG_WARN "setsockopt - %s\n", strerror(errno));
-                break;
-            }
-
             /* Spawn connection handler */
             pthread_t thread;
             if (pthread_create(&thread, NULL, handle_connection, (void *)&fd) < 0) {
@@ -208,6 +207,7 @@ void *handle_connection(void *fd_vptr)
     int fd = *(int *)fd_vptr;
     request_t req = {0};
     response_t res = {0};
+    struct stat st = {0};
     char *path;
     struct sockaddr_in peer_addr;
     socklen_t addr_len = sizeof(peer_addr);
@@ -215,7 +215,7 @@ void *handle_connection(void *fd_vptr)
     fd_set readfds_master, readfds;
     int rval, timer, ready;
     bool keepalive;
-    char requested_file_path[REQ_BUFLEN] = "";
+    char cache_dir[REQ_BUFLEN] = "";
 
     if ((getpeername(fd, (struct sockaddr *)&peer_addr, &addr_len)) < 0) {
         printl(LOG_WARN "getpeername failed - %s\n", strerror(errno));
@@ -249,18 +249,16 @@ void *handle_connection(void *fd_vptr)
         printl(LOG_INFO "(%d) %s %s %s\n", fd, req.ip, req.method,
                req.url->full);
 
-        strcpy(requested_file_path, PROXY_ROOT);
-        strcpy(requested_file_path, req.url->host);
-        strcpy(requested_file_path, req.url->path);
-
         if (request_method_is_get(&req)) {
             if (hashmap_get(&file_cache, req.url->full, (char **) &path) != -1) {
+                printl(LOG_DEBUG "Cache hit: %s\n", path);
                 rval = send_cache_file(&req, path);
                 free(path);
                 if (rval < 0) {
                     send_error(&req, 404);
                     break;
                 }
+                continue;
             }
 
             /* Open socket to req.url->host:req.url->port */
@@ -302,24 +300,26 @@ void *handle_connection(void *fd_vptr)
             }
 
             /* Write response to requester */
-            printl(LOG_DEBUG "Forward response from %s to %s\n", req.url->host, req.ip);
+            printl(LOG_DEBUG "Forwarding response from %s to %s\n", req.url->host, req.ip);
             write(req.client_fd, res.raw, res.raw_len);
-
-            close(req.server_fd);
-            response_destroy(&res);
 
             /* If response is 200 - cache file */
             if (response_ok(&res)) {
-                /*
-                 * TODO - read response header Content-Length and pass to
-                 * save_cache_file
-                 */
+                /* Ensure a cache directory exists for this host */
+                sprintf(cache_dir, "%s/%s", CACHE_ROOT, req.url->host);
+                if (stat(cache_dir, &st) == -1) {
+                    mkdir(cache_dir, DIR_PERMS);
+                }
+
                 path = url_to_cache_path(req.url);
-                /* TODO - impliment save_cache_file */
                 save_cache_file(&res, path);
                 hashmap_add(&file_cache, req.url->full, path);
+                printl(LOG_DEBUG "Cache entry created: %s\n", path);
                 free(path);
             }
+
+            close(req.server_fd);
+            response_destroy(&res);
 
         } else {
             send_error(&req, 405);
@@ -383,6 +383,7 @@ int send_cache_file(request_t *req, char *path)
     char *resbuf;
     size_t resbuflen, clen;
     FILE *file;
+    struct stat st;
     char *fileext;
     char filebuf[RES_BUFLEN] = "";
     const char *ctype;
@@ -394,18 +395,15 @@ int send_cache_file(request_t *req, char *path)
     }
 
     /* Set Content-Length */
-    struct stat st;
     stat(path, &st);
     clen = st.st_size;
 
     /* Set Content-Type */
-    fileext = strrchr(path, '.');
-    if (fileext && !strcmp(fileext, ".html"))
-        ctype = "text/html";
+    fileext = strrchr(req->url->path, '.');
+    if (fileext && !strcmp(fileext, ".png"))
+        ctype = "image/png";
     else if (fileext && !strcmp(fileext, ".txt"))
         ctype = "text/plain";
-    else if (fileext && !strcmp(fileext, ".png"))
-        ctype = "image/png";
     else if (fileext && !strcmp(fileext, ".gif"))
         ctype = "image/gif";
     else if (fileext && !strcmp(fileext, ".jpg"))
@@ -415,7 +413,7 @@ int send_cache_file(request_t *req, char *path)
     else if (fileext && !strcmp(fileext, ".js"))
         ctype = "application/javascript";
     else
-        ctype = "application/octet-stream";
+        ctype = "text/html";
 
     /* Send header */
     response_init_from_request(req, &res, 200, ctype, clen);
@@ -423,8 +421,7 @@ int send_cache_file(request_t *req, char *path)
     ntotal += write(req->client_fd, resbuf, resbuflen);
 
     const char *msg = LOG_INFO "(%d) -> %s 200 %s %s (%lu)\n";
-    /* drop .cache */
-    printl(msg, req->client_fd, req->ip, path + 6, ctype, clen);
+    printl(msg, req->client_fd, req->ip, path, ctype, clen);
 
     /* Send body */
     while ((nsend = fread(filebuf, 1, RES_BUFLEN, file))) {
@@ -569,7 +566,7 @@ void *cache_gc(void *cache_vptr)
 char *url_to_cache_path(const url_t *url)
 {
     char *p = strdup(url->path);
-    char *cache_path = malloc(strlen(PROXY_ROOT) + strlen(url->host) +
+    char *cache_path = malloc(strlen(CACHE_ROOT) + strlen(url->host) +
                               strlen(url->path) + 3);
 
     /* Replace illegal path characters */
@@ -577,8 +574,27 @@ char *url_to_cache_path(const url_t *url)
         if (p[i] == '/')
             p[i] = '_';
 
-    sprintf(cache_path, "%s/%s/%s", PROXY_ROOT, url->host, p);
+    sprintf(cache_path, "%s/%s/%s", CACHE_ROOT, url->host, p);
     free(p);
 
     return cache_path;
+}
+
+
+void save_cache_file(response_t *res, char *path)
+{
+    size_t content_length;
+    FILE *file;
+
+    if ((file = fopen(path, "wb")) == NULL) {
+        printl(LOG_WARN "Failed to open %s - %s\n", path, strerror(errno));
+        return;
+    }
+
+    content_length = response_content_length(res);
+
+    if (fwrite(res->content, 1, content_length, file) != content_length)
+        printl(LOG_WARN "Failed to write to %s - %s", path, strerror(errno));
+
+    fclose(file);
 }
