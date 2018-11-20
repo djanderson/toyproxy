@@ -56,6 +56,7 @@ int initialize_listener(struct sockaddr_in *saddr, int *fd);
 int proxy(int ssock);
 /* Handle a single connection until connection close or keep-alive timeout. */
 void *handle_connection(void *fd_vptr);
+/* FIXME: dead code */
 /* Consume requests from the queue. */
 void *handle_request(void *queue_vptr);
 /* Send an HTTP error response (no body). */
@@ -111,6 +112,7 @@ int main(int argc, char *argv[])
         return errno;
     }
 
+    /* FIXME: dead code */
     /* Spawn request handler thread pool */
     printl(LOG_DEBUG "Initializing %d worker threads\n", nthreads);
     for (int i = 0; i < nthreads; i++) {
@@ -139,6 +141,7 @@ int main(int argc, char *argv[])
     printl(LOG_INFO "Webproxy started on port %d\n", port);
     rval = proxy(ssock);
 
+    /* FIXME: dead code */
     /* Unblock waiting threads */
     for (int i = 0; i < nthreads; i++)
         queue_signal_available(&requestq);
@@ -205,27 +208,27 @@ int proxy(int ssock)
 void *handle_connection(void *fd_vptr)
 {
     int fd = *(int *)fd_vptr;
+    int rval, timer, ready;
+    char *path;
+    char cache_dir[REQ_BUFLEN] = "";
+    fd_set readfds_master, readfds;
+    bool keepalive;
     request_t req = {0};
     response_t res = {0};
     struct stat st = {0};
-    char *path;
     struct sockaddr_in peer_addr;
-    socklen_t addr_len = sizeof(peer_addr);
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
-    fd_set readfds_master, readfds;
-    int rval, timer, ready;
-    bool keepalive;
-    char cache_dir[REQ_BUFLEN] = "";
+    socklen_t addr_len = sizeof(peer_addr);
 
     if ((getpeername(fd, (struct sockaddr *)&peer_addr, &addr_len)) < 0) {
         printl(LOG_WARN "getpeername failed - %s\n", strerror(errno));
         pthread_exit(NULL);
     }
 
-    /* If keep-alive requested, watch fd for KEEPALIVE_TIMEOUT_S seconds */
     FD_ZERO(&readfds_master);
     FD_SET(fd, &readfds_master);
 
+    /* If keep-alive requested, watch fd for KEEPALIVE_TIMEOUT_S seconds */
     do {
         timer = 1;
         request_destroy(&req);  /* safe to call on uninit'd req struct */
@@ -249,82 +252,85 @@ void *handle_connection(void *fd_vptr)
         printl(LOG_INFO "(%d) %s %s %s\n", fd, req.ip, req.method,
                req.url->full);
 
-        if (request_method_is_get(&req)) {
-            if (hashmap_get(&file_cache, req.url->full, (char **) &path) != -1) {
-                printl(LOG_DEBUG "Cache hit: %s\n", path);
-                rval = send_cache_file(&req, path);
-                free(path);
-                if (rval < 0) {
-                    send_error(&req, 404);
-                    break;
-                }
-                continue;
-            }
-
-            /* Open socket to req.url->host:req.url->port */
-            struct sockaddr_in server;
-
-            req.server_fd = socket(AF_INET, SOCK_STREAM, 0);
-            if (req.server_fd == -1) {
-                printl(LOG_ERR "socket - %s", strerror(errno));
-                break;
-            }
-            printl(LOG_DEBUG "Socket opened for %s\n", req.url->host);
-
-            server.sin_addr.s_addr = inet_addr(req.url->ip);
-            server.sin_family = AF_INET;
-            server.sin_port = htons(req.url->port);
-
-            /* Connect to remote server */
-            if (connect(req.server_fd, (struct sockaddr *)&server , sizeof(server)) < 0) {
-                printl(LOG_ERR "connect - %s", strerror(errno));
-                break;
-            }
-            printl(LOG_DEBUG "Socket connected to %s\n", req.url->host);
-
-            /* Send FULL request to above */
-            printl(LOG_DEBUG "Forwarding request to %s\n", req.url->host);
-            write(req.server_fd, req.raw, req.raw_len);
-
-            response_init(&res);
-
-            /* Read response from remote */
-            printl(LOG_DEBUG "Waiting for response from %s\n", req.url->host);
-            if ((rval = response_read(&res, req.server_fd) != 0)) {
-                if (rval >= 100 && rval <= 599)
-                    send_error(&req, rval); /* send error back to requester */
-
-                close(req.server_fd);
-                response_destroy(&res);
-                break;
-            }
-
-            /* Write response to requester */
-            printl(LOG_DEBUG "Forwarding response from %s to %s\n", req.url->host, req.ip);
-            write(req.client_fd, res.raw, res.raw_len);
-
-            /* If response is 200 - cache file */
-            if (response_ok(&res)) {
-                /* Ensure a cache directory exists for this host */
-                sprintf(cache_dir, "%s/%s", CACHE_ROOT, req.url->host);
-                if (stat(cache_dir, &st) == -1) {
-                    mkdir(cache_dir, DIR_PERMS);
-                }
-
-                path = url_to_cache_path(req.url);
-                save_cache_file(&res, path);
-                hashmap_add(&file_cache, req.url->full, path);
-                printl(LOG_DEBUG "Cache entry created: %s\n", path);
-                free(path);
-            }
-
-            close(req.server_fd);
-            response_destroy(&res);
-
-        } else {
+        /* Only GET required to implement at this time */
+        if (!request_method_is_get(&req)) {
             send_error(&req, 405);
             break;
         }
+
+        if (hashmap_get(&file_cache, req.url->full, (char **) &path) != -1) {
+            printl(LOG_DEBUG "Cache hit: %s\n", path);
+            rval = send_cache_file(&req, path);
+            free(path);
+            if (rval < 0) {
+                send_error(&req, 404);
+                break;
+            }
+            continue;
+        }
+
+        /* Open socket to req.url->host:req.url->port */
+        struct sockaddr_in server;
+
+        req.server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (req.server_fd == -1) {
+            printl(LOG_ERR "socket - %s", strerror(errno));
+            /* FIXME: close fd? */
+            break;
+        }
+        printl(LOG_DEBUG "Socket opened for %s\n", req.url->host);
+
+        server.sin_addr.s_addr = inet_addr(req.url->ip);
+        server.sin_family = AF_INET;
+        server.sin_port = htons(req.url->port);
+
+        /* Connect to remote server */
+        rval = connect(req.server_fd, (struct sockaddr *)&server , addr_len);
+        if (rval < 0) {
+            printl(LOG_ERR "connect - %s", strerror(errno));
+            /* FIXME: close fd? */
+            break;
+        }
+        printl(LOG_DEBUG "Socket connected to %s\n", req.url->host);
+
+        /* Send full request to above */
+        printl(LOG_DEBUG "Forwarding request to %s\n", req.url->host);
+        write(req.server_fd, req.raw, req.raw_len);
+
+        response_init(&res);
+
+        /* Read response from remote */
+        printl(LOG_DEBUG "Waiting for response from %s\n", req.url->host);
+        if ((rval = response_read(&res, req.server_fd) != 0)) {
+            if (rval >= 100 && rval <= 599)
+                send_error(&req, rval); /* send error back to requester */
+
+            close(req.server_fd);
+            response_destroy(&res);
+            break;
+        }
+
+        /* Write response to requester */
+        printl(LOG_DEBUG "Forwarding response from %s to %s\n", req.url->host, req.ip);
+        write(req.client_fd, res.raw, res.raw_len);
+
+        /* If response is 200, cache file */
+        if (response_ok(&res)) {
+            /* Ensure a cache directory exists for this host */
+            sprintf(cache_dir, "%s/%s", CACHE_ROOT, req.url->host);
+            if (stat(cache_dir, &st) == -1) {
+                mkdir(cache_dir, DIR_PERMS);
+            }
+
+            path = url_to_cache_path(req.url);
+            save_cache_file(&res, path);
+            hashmap_add(&file_cache, req.url->full, path);
+            printl(LOG_DEBUG "Cache entry created: %s\n", path);
+            free(path);
+        }
+
+        close(req.server_fd);
+        response_destroy(&res);
 
         while (keepalive) {
             readfds = readfds_master;
@@ -353,6 +359,7 @@ void *handle_connection(void *fd_vptr)
 }
 
 
+/* FIXME: dead code */
 void *handle_request(void *param)
 {
     (void)param;
