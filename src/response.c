@@ -29,6 +29,7 @@ int response_read(response_t *res, int fd)
 {
     int nrecv, nrecvd, nunparsed;
     char resbuf[RES_BUFLEN] = "";
+    int id = res->thread_id;
 
     nunparsed = 0;
     nrecv = RES_BUFLEN;
@@ -44,11 +45,11 @@ int response_read(response_t *res, int fd)
     }
 
     if (nrecvd <= 0) {
-        printl(LOG_DEBUG "Connection closed\n");
+        printl(LOG_DEBUG "[%d] Connection closed\n", id);
         if (nrecvd == 0 && nunparsed == RES_BUFLEN) {
             return 431;         /* Response Header Fields Too Large Error */
         } else if (nrecvd == -1) {
-            printl(LOG_WARN "response read - %s\n", strerror(errno));
+            printl(LOG_WARN "[%d] response read - %s\n", id, strerror(errno));
             return 500;         /* Internal Server Error */
         }
 
@@ -64,8 +65,10 @@ int response_read(response_t *res, int fd)
 int response_serialize(response_t *res, char **buf, size_t *buflen)
 {
     int rval;
-    char *status, *server, *date, *conn, *content_type, *content_length, *fmt;
+    char *status, *server, *date, *conn, *content_type, *content_length;
+    char *msg, *fmt;
     size_t nbytes = 0;
+    int id = res->thread_id;
 
     status = res->header.status_line;
     hashmap_get(&res->header.fields, "Date", &date);
@@ -111,7 +114,8 @@ int response_serialize(response_t *res, char **buf, size_t *buflen)
         rval = 0;
     } else {
         /* Out of memory */
-        printl(LOG_ERR "Error serializing response - %s\n", strerror(errno));
+        msg = LOG_ERR "[%d] Error serializing response - %s\n";
+        printl(msg, id, strerror(errno));
         *buf = (char *) error_500;
         *buflen = strlen(error_500);
         rval = -1;
@@ -134,6 +138,7 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
     char *line, *key, *value, *clen, *header_end, *line_end;
     size_t nunparsed, line_len, line_buffer_sz;
     size_t header_len, expected_content_len, actual_content_len;
+    int id = res->thread_id;
 
     /* Copy response into raw buffer */
     res->raw = realloc(res->raw, res->raw_len + buflen + 1);
@@ -165,7 +170,7 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
 
             if (res->header.status_line == NULL) {
                 /* header status line */
-                printl(LOG_DEBUG "Got response: %s\n", line);
+                printl(LOG_DEBUG "[%d] Got response: %s\n", id, line);
                 res->header.status_line = strdup(line);
             } else {
                 /* header field line */
@@ -236,6 +241,8 @@ void response_init_from_request(const request_t *req, response_t *res,
 {
     const int field_len = 100;
     char field[field_len];
+    time_t now = time(0);
+    struct tm gmt = *gmtime(&now);
 
     response_init(res);
     status_string(status, field, field_len);
@@ -244,8 +251,6 @@ void response_init_from_request(const request_t *req, response_t *res,
 
     hashmap_add(&res->header.fields, "Server", response_server);
 
-    time_t now = time(0);
-    struct tm gmt = *gmtime(&now);
     strftime(field, field_len, response_date_fmt, &gmt);
     hashmap_add(&res->header.fields, "Date", field);
 

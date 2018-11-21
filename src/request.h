@@ -16,6 +16,7 @@ typedef struct request {
     bool complete;              /* indicates request completely received */
     int client_fd;              /* fd of the client socket */
     int server_fd;              /* fd of the server socket */
+    int thread_id;              /* id of thread handling request */
     char *raw;                  /* raw request buffer */
     size_t raw_len;             /*  */
     size_t raw_buffer_sz;       /* size of the raw buffer */

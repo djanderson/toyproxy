@@ -87,6 +87,10 @@ void hashmap_destroy(hashmap_t *map)
             current = map->bucket[i];
             do {
                 next = current->next;
+                if (map->unlinker) {
+                    printl(LOG_DEBUG "Unlinking %s\n", current->value);
+                    map->unlinker(current->value);
+                }
                 hashmap_entry_destroy(current);
                 free(current);
                 current = next;

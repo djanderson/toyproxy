@@ -18,6 +18,7 @@ typedef struct response_header {
 
 typedef struct response {
     bool complete;              /* indicates response completely received */
+    int thread_id;              /* id of thread handling response */
     char *raw;                  /* raw response header buffer or NULL */
     size_t raw_buffer_sz;       /* size of allocated raw buffer */
     size_t raw_len;             /* number of bytes in raw buffer */
