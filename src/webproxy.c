@@ -155,8 +155,10 @@ int main(int argc, char *argv[])
 
 int proxy(int ssock)
 {
-    int rval, fd, ready;
-    struct sockaddr_in caddr;
+    int rval, ready;
+    int *fd;
+    pthread_t thread;
+    struct sockaddr_in client_addr;
     socklen_t addr_sz = sizeof(struct sockaddr_in);
     fd_set readfds_master, readfds;
     char *msg;
@@ -176,18 +178,18 @@ int proxy(int ssock)
         } else if (exit_requested) {
             printl(LOG_DEBUG "[%d] Caught SIGINT\n", id);
         } else if (ready) {
-            fd = accept(ssock, (struct sockaddr *)&caddr, &addr_sz);
-            if (fd < 0) {
+            fd = malloc(sizeof(int *));
+            *fd = accept(ssock, (struct sockaddr *)&client_addr, &addr_sz);
+            if (*fd < 0) {
                 printl(LOG_ERR "[%d] accept - %s\n", id, strerror(errno));
                 break;
             }
 
             msg = LOG_DEBUG "[%d] Connection accepted on socket %d\n";
-            printl(msg, id, fd);
+            printl(msg, id, *fd);
 
             /* Spawn connection handler */
-            pthread_t thread;
-            rval = pthread_create(&thread, NULL, handle_connection, &fd);
+            rval = pthread_create(&thread, NULL, handle_connection, fd);
             if (rval < 0) {
                 msg = LOG_ERR "[%d] pthread_create - %s\n";
                 printl(msg, id, strerror(errno));
@@ -204,9 +206,9 @@ int proxy(int ssock)
 }
 
 
-void *handle_connection(void *fd_vptr)
+void *handle_connection(void *cfd_vptr)
 {
-    int cfd = *(int *)fd_vptr;  /* client socket fd */
+    int cfd = *(int *)cfd_vptr; /* client socket fd */
     int sfd = -1;               /* server socket fd */
     int rval, timer, ready;
     char *path, *msg;
@@ -220,10 +222,12 @@ void *handle_connection(void *fd_vptr)
     struct sockaddr_in server_addr;
     struct sockaddr_in current_server_addr = {0}; /* open sock addr */
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
-    socklen_t addr_len = sizeof(struct sockaddr_in);
+    socklen_t addr_sz = sizeof(struct sockaddr_in);
     int id = thread_id = global_thread_count++;
 
-    if ((getpeername(cfd, (struct sockaddr *)&client_addr, &addr_len)) < 0) {
+    free(cfd_vptr);
+
+    if ((getpeername(cfd, (struct sockaddr *)&client_addr, &addr_sz)) < 0) {
         printl(LOG_WARN "[%d] getpeername failed - %s\n", id, strerror(errno));
         pthread_exit(NULL);
     }
@@ -303,7 +307,7 @@ void *handle_connection(void *fd_vptr)
             printl(msg, id, sfd, req.url->host);
 
             /* Connect to remote server */
-            rval = connect(sfd, (struct sockaddr *)&server_addr , addr_len);
+            rval = connect(sfd, (struct sockaddr *)&server_addr , addr_sz);
             if (rval < 0) {
                 printl(LOG_ERR "[%d] connect - %s", id, strerror(errno));
                 break;
@@ -311,7 +315,7 @@ void *handle_connection(void *fd_vptr)
             msg = LOG_DEBUG "[%d] Socket %d connected to %s\n";
             printl(msg, id, sfd, req.url->host);
 
-            memcpy(&current_server_addr, &server_addr, addr_len);
+            memcpy(&current_server_addr, &server_addr, addr_sz);
         }
 
         /* Send full request to above */
