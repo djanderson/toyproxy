@@ -14,7 +14,6 @@
 #include <sys/stat.h>           /* stat, struct st */
 #include <unistd.h>             /* close, read, write */
 
-#include "queue.h"
 #include "hashmap.h"
 #include "printl.h"
 #include "request.h"
@@ -23,9 +22,7 @@
 #define CACHE_ROOT ".cache"
 #define BLACKLIST_FILE "blacklist.txt"
 #define DIR_PERMS 0700
-#define MAX_THREADS 15          /* Max request handler threads */
 #define MAX_BACKLOG 100         /* Max connections before ECONNREFUSED error */
-#define MAX_REQUESTS 100        /* Request queue size */
 #define KEEPALIVE_TIMEOUT_S 10
 #define DEFAULT_CACHE_TIMEOUT_S 60
 
@@ -42,7 +39,6 @@ atomic_bool exit_requested = false;
 atomic_int global_thread_count = 0;
 __thread int thread_id;
 
-queue_t requestq;
 hashmap_t file_cache;
 
 /* If a requested URL or IP is in the blacklist, return 403 Forbidden. */
@@ -114,7 +110,6 @@ int main(int argc, char *argv[])
     if (pthread_create(&cache_gc_thread, NULL, cache_gc,
                        (void *)&file_cache) < 0) {
         printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
-        queue_destroy(&requestq);
         hashmap_destroy(&hostname_cache);
         hashmap_destroy(&file_cache);
         return errno;
