@@ -29,6 +29,7 @@ int response_read(response_t *res, int fd)
 {
     int nrecv, nrecvd, nunparsed;
     char resbuf[RES_BUFLEN] = "";
+    char *msg;
     int id = res->thread_id;
 
     nunparsed = 0;
@@ -36,16 +37,17 @@ int response_read(response_t *res, int fd)
     while ((nrecvd = read(fd, resbuf + nunparsed, nrecv)) > 0) {
         resbuf[nunparsed + nrecvd] = '\0';
         nunparsed = response_deserialize(res, resbuf, nunparsed + nrecvd);
-        if (nunparsed < 0) {
+        if (nunparsed < 0)
             return 400;         /* Bad Response Error */
-        }
+
         nrecv = RES_BUFLEN - nunparsed;
         if (res->complete)
             break;
     }
 
     if (nrecvd <= 0) {
-        printl(LOG_DEBUG "[%d] Connection closed\n", id);
+        msg = LOG_DEBUG "[%d] Connection closed while reading response\n";
+        printl(msg, id);
         if (nrecvd == 0 && nunparsed == RES_BUFLEN) {
             return 431;         /* Response Header Fields Too Large Error */
         } else if (nrecvd == -1) {

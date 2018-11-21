@@ -30,7 +30,7 @@ int request_read(request_t *req)
     }
 
     if (nrecvd <= 0) {
-        printl(LOG_DEBUG "[%d] Connection closed\n", id);
+        printl(LOG_DEBUG "[%d] Connection closed while reading request\n", id);
         if (nrecvd == 0 && nunparsed == REQ_BUFLEN) {
             return 431;         /* Request Header Fields Too Large Error */
         } else if (nrecvd == -1) {

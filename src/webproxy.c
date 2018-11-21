@@ -408,7 +408,7 @@ int send_cache_file(request_t *req, char *path)
     int ntotal = 0, nsend, nsent;
     int id = thread_id;
 
-    if ((file = fopen(path, "rb")) == NULL) {
+    if ((file = fopen(path, "r")) == NULL) {
         msg = LOG_DEBUG "[%d] Failed to open %s - %s\n";
         printl(msg, id, path, strerror(errno));
         return -1;
@@ -614,7 +614,7 @@ void save_cache_file(response_t *res, char *path)
     FILE *file;
     int id = thread_id;
 
-    if ((file = fopen(path, "wb")) == NULL) {
+    if ((file = fopen(path, "w")) == NULL) {
         msg = LOG_WARN "[%d] Failed to open %s - %s\n";
         printl(msg, id, path, strerror(errno));
         return;
