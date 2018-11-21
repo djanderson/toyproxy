@@ -275,7 +275,6 @@ void *handle_connection(void *fd_vptr)
         req.server_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (req.server_fd == -1) {
             printl(LOG_ERR "socket - %s", strerror(errno));
-            /* FIXME: close fd? */
             break;
         }
         printl(LOG_DEBUG "Socket opened for %s\n", req.url->host);
@@ -288,7 +287,6 @@ void *handle_connection(void *fd_vptr)
         rval = connect(req.server_fd, (struct sockaddr *)&server , addr_len);
         if (rval < 0) {
             printl(LOG_ERR "connect - %s", strerror(errno));
-            /* FIXME: close fd? */
             break;
         }
         printl(LOG_DEBUG "Socket connected to %s\n", req.url->host);
