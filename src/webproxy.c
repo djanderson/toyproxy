@@ -195,7 +195,7 @@ void *handle_connection(void *fd_vptr)
 {
     int fd = *(int *)fd_vptr;
     int rval, timer, ready;
-    char *path;
+    char *path, *msg;
     char cache_dir[REQ_BUFLEN] = "";
     fd_set readfds_master, readfds;
     bool keepalive;
@@ -236,13 +236,13 @@ void *handle_connection(void *fd_vptr)
         }
 
         if (blacklist_has_entry(&req)) {
-            printl(LOG_WARN "Request url %s is blacklisted\n", req.url->host);
+            msg = LOG_WARN "Requested URL %s or IP %s is blacklisted\n";
+            printl(msg, req.url->host, req.url->ip);
             send_error(&req, 403);
             break;
         }
 
-        printl(LOG_INFO "(%d) %s %s %s\n", fd, req.ip, req.method,
-               req.url->full);
+        printl("(%d) %s %s %s\n", fd, req.ip, req.method, req.url->full);
 
         /* Only GET required to implement at this time */
         if (!request_method_is_get(&req)) {
@@ -301,7 +301,8 @@ void *handle_connection(void *fd_vptr)
         }
 
         /* Write response to requester */
-        printl(LOG_DEBUG "Forwarding response from %s to %s\n", req.url->host, req.ip);
+        msg = LOG_DEBUG "Forwarding response from %s to %s\n";
+        printl(msg, req.url->host, req.ip);
         write(req.client_fd, res.raw, res.raw_len);
 
         /* If response is 200, cache file */
@@ -597,7 +598,7 @@ int blacklist_init()
         if (host[nread - 1] == '\n')
             host[nread - 1] = '\0';
 
-        if (strlen(host) == 0)
+        if (strlen(host) == 0 || host[0] == '#')
             continue;
 
         printl(LOG_DEBUG "Adding `%s' to blacklist\n", host);
@@ -625,12 +626,8 @@ void blacklist_destroy()
 {
     printl(LOG_DEBUG "Freeing blacklist\n");
 
-    for (int i = 0; blacklist[i] != NULL; i++) {
-        printl(LOG_DEBUG "Freeing %s from blacklist\n", blacklist[i]);
+    for (int i = 0; blacklist[i] != NULL; i++)
         free(blacklist[i]);
-    }
-
-    printl(LOG_DEBUG "Freeing actual blacklist\n");
 
     free(blacklist);
 }
@@ -640,15 +637,11 @@ bool blacklist_has_entry(request_t *req)
 {
     char *host;
 
-    printl(LOG_DEBUG "Blacklist address %02x\n", blacklist);
-
     for (int i = 0; blacklist[i] != NULL; i++) {
         host = blacklist[i];
         if (!strcmp(req->url->host, host) || !strcmp(req->url->ip, host))
             return true;
     }
-
-    printl(LOG_DEBUG "Blacklist address %02x\n", blacklist);
 
     return false;
 }

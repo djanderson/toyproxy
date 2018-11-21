@@ -1,4 +1,4 @@
 www.kernel.org
-ecee.colorado.edu
 
-128.138.97.135
+# beej.us (Beej's Guide to Network Programming)
+64.90.34.130
