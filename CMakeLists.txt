@@ -13,3 +13,7 @@ include(CTest)
 add_subdirectory(src)
 add_subdirectory(vendor)
 add_subdirectory(tests)
+
+# Hack - copy to both directories instead of finding absolute path in webproxy
+file(COPY blacklist.txt DESTINATION "${CMAKE_BINARY_DIR}")
+file(COPY blacklist.txt DESTINATION "${CMAKE_BINARY_DIR}/src")

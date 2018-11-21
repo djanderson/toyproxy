@@ -17,6 +17,7 @@ const char response_version_1_0[] = "HTTP/1.0";
 const char response_version_1_1[] = "HTTP/1.1";
 const char response_success_200[] = "200 Success";
 const char response_client_error_400[] = "400 Bad Request";
+const char response_client_error_403[] = "403 Forbidden";
 const char response_client_error_404[] = "404 Not Found";
 const char response_client_error_405[] = "405 Method Not Allowed";
 const char response_client_error_431[] = "431 Request Header Fields Too Large";
@@ -286,6 +287,9 @@ char *status_string(int status, char *buf, size_t buflen)
         break;
     case 400:
         status_str = response_client_error_400;
+        break;
+    case 403:
+        status_str = response_client_error_403;
         break;
     case 404:
         status_str = response_client_error_404;

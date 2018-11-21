@@ -21,6 +21,7 @@
 #include "response.h"
 
 #define CACHE_ROOT ".cache"
+#define BLACKLIST_FILE "blacklist.txt"
 #define DIR_PERMS 0700
 #define MAX_THREADS 15          /* Max request handler threads */
 #define MAX_BACKLOG 100         /* Max connections before ECONNREFUSED error */
@@ -42,6 +43,9 @@ atomic_bool exit_requested = false;
 queue_t requestq;
 hashmap_t file_cache;
 
+/* If a requested URL or IP is in the blacklist, return 403 Forbidden. */
+char **blacklist;
+
 static void signal_handler(int __attribute__((__unused__)) sig)
 {
     exit_requested = true;
@@ -56,9 +60,6 @@ int initialize_listener(struct sockaddr_in *saddr, int *fd);
 int proxy(int ssock);
 /* Handle a single connection until connection close or keep-alive timeout. */
 void *handle_connection(void *fd_vptr);
-/* FIXME: dead code */
-/* Consume requests from the queue. */
-void *handle_request(void *queue_vptr);
 /* Send an HTTP error response (no body). */
 int send_error(request_t *req, int status);
 /* Save a response's content in at `path`. */
@@ -69,20 +70,21 @@ int send_cache_file(request_t *req, char *path);
 void *cache_gc(void *cache_vptr);
 /* Return heap-allocated string that the user must free. */
 char *url_to_cache_path(const url_t *url);
+/* Load blacklist.txt into blacklist character array. */
+int blacklist_init();
+/* Free blacklist memory. */
+void blacklist_destroy();
+/* Return true if the requested URL or IP is on the blacklist. */
+bool blacklist_has_entry(request_t *req);
 
 
 int main(int argc, char *argv[])
 {
     int rval, ssock, port, cache_timeout;
     pthread_t cache_gc_thread;
-    pthread_t threads[MAX_THREADS];
     sigset_t set;
     struct stat st;
     struct sockaddr_in addr;
-    int nthreads = sysconf(_SC_NPROCESSORS_CONF);
-
-    if (nthreads > MAX_THREADS)
-        nthreads = MAX_THREADS;
 
     printl_setlevel(INFO);
 
@@ -93,7 +95,6 @@ int main(int argc, char *argv[])
     sigaddset(&set, SIGINT);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
 
-    queue_init(&requestq, MAX_REQUESTS);
     hashmap_init(&hostname_cache, 100);
     hashmap_init(&file_cache, 100);
     file_cache.timeout = cache_timeout;
@@ -112,18 +113,6 @@ int main(int argc, char *argv[])
         return errno;
     }
 
-    /* FIXME: dead code */
-    /* Spawn request handler thread pool */
-    printl(LOG_DEBUG "Initializing %d worker threads\n", nthreads);
-    for (int i = 0; i < nthreads; i++) {
-        if (pthread_create(&threads[i], NULL,  handle_request, NULL) < 0) {
-            printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
-            queue_destroy(&requestq);
-            hashmap_destroy(&hostname_cache);
-            return errno;
-        }
-    }
-
     pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
     memset(&addr, 0, sizeof(addr));
@@ -132,29 +121,26 @@ int main(int argc, char *argv[])
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if ((rval = initialize_listener(&addr, &ssock) < 0)) {
-        queue_destroy(&requestq);
         hashmap_destroy(&hostname_cache);
+        hashmap_destroy(&file_cache);
         return rval;
     }
+
+    if (blacklist_init() == -1)
+        printl(LOG_ERR "Failed to load blacklist from %s\n", BLACKLIST_FILE);
 
     /* Serve until terminated */
     printl(LOG_INFO "Webproxy started on port %d\n", port);
     rval = proxy(ssock);
 
-    /* FIXME: dead code */
-    /* Unblock waiting threads */
-    for (int i = 0; i < nthreads; i++)
-        queue_signal_available(&requestq);
-
     /* Wait for worker threads to exit */
     printl(LOG_INFO "Exiting...\n");
     pthread_join(cache_gc_thread, NULL);
-    for (int i = 0; i < nthreads; i++)
-        pthread_join(threads[i], NULL);
 
-    queue_destroy(&requestq);
-    hashmap_destroy(&hostname_cache);
     close(ssock);
+    hashmap_destroy(&hostname_cache);
+    hashmap_destroy(&file_cache);
+    blacklist_destroy();
 
     return rval;
 }
@@ -246,6 +232,12 @@ void *handle_connection(void *fd_vptr)
         rval = request_lookup_host(&req);
         if (rval == -1) {
             send_error(&req, 404);
+            break;
+        }
+
+        if (blacklist_has_entry(&req)) {
+            printl(LOG_WARN "Request url %s is blacklisted\n", req.url->host);
+            send_error(&req, 403);
             break;
         }
 
@@ -357,30 +349,6 @@ void *handle_connection(void *fd_vptr)
 }
 
 
-/* FIXME: dead code */
-void *handle_request(void *param)
-{
-    (void)param;
-    request_t req = {0};
-    const unsigned int thread_id = pthread_self();
-
-    while (!exit_requested) {
-        printl(LOG_DEBUG "Thread %u waiting for request\n", thread_id);
-        queue_wait_if_empty(&requestq);
-        if (exit_requested) {
-            printl(LOG_DEBUG "Request handler %u terminated\n", thread_id);
-            break;
-        }
-
-        req = queue_get(&requestq);
-    }
-
-    printl(LOG_DEBUG "Worker thread %u exiting\n", thread_id);
-    pthread_exit(NULL);
-}
-
-
-
 /* Return total bytes sent or -1. */
 int send_cache_file(request_t *req, char *path)
 {
@@ -448,10 +416,12 @@ int send_error(request_t *req, int status)
     size_t resbuflen;
     int nsent;
 
-    printl(LOG_INFO "(%d) -> %s %d\n", req->client_fd, req->ip, status);
-
     response_init_from_request(req, &res, status, NULL, 0);
     response_serialize(&res, &resbuf, &resbuflen);
+
+    printl("(%d) -> %s %s\n", req->client_fd, req->ip, res.header.status_line);
+
+
     if ((nsent = write(req->client_fd, resbuf, resbuflen)) < 0)
         printl(LOG_WARN "Socket write failed - %s\n", strerror(errno));
 
@@ -602,4 +572,83 @@ void save_cache_file(response_t *res, char *path)
         printl(LOG_WARN "Failed to write to %s - %s", path, strerror(errno));
 
     fclose(file);
+}
+
+
+int blacklist_init()
+{
+    int nread;
+    int list_len = 0;
+    int blacklist_buffer_sz = 10;
+    size_t len = 0;
+    FILE *file;
+    char *host = NULL;
+
+    printl(LOG_DEBUG "Loading blacklist\n");
+
+    if ((file = fopen(BLACKLIST_FILE, "r")) == NULL) {
+        printl(LOG_ERR "fopen %s - %s\n", BLACKLIST_FILE, strerror(errno));
+        return -1;
+    }
+
+    blacklist = calloc(blacklist_buffer_sz, sizeof(char *));
+
+    while ((nread = getline(&host, &len, file)) != -1) {
+        if (host[nread - 1] == '\n')
+            host[nread - 1] = '\0';
+
+        if (strlen(host) == 0)
+            continue;
+
+        printl(LOG_DEBUG "Adding `%s' to blacklist\n", host);
+        blacklist[list_len] = strdup(host);
+
+        if (++list_len == blacklist_buffer_sz) {
+            printl(LOG_DEBUG "Resizing blacklist array %d -> %d\n",
+                   blacklist_buffer_sz, blacklist_buffer_sz + 10);
+            blacklist_buffer_sz += 10;
+            blacklist = realloc(blacklist, blacklist_buffer_sz);
+        }
+    }
+
+    /* Null terminate blacklist */
+    blacklist[list_len] = NULL;
+
+    free(host);
+    fclose(file);
+
+    return 0;
+}
+
+
+void blacklist_destroy()
+{
+    printl(LOG_DEBUG "Freeing blacklist\n");
+
+    for (int i = 0; blacklist[i] != NULL; i++) {
+        printl(LOG_DEBUG "Freeing %s from blacklist\n", blacklist[i]);
+        free(blacklist[i]);
+    }
+
+    printl(LOG_DEBUG "Freeing actual blacklist\n");
+
+    free(blacklist);
+}
+
+
+bool blacklist_has_entry(request_t *req)
+{
+    char *host;
+
+    printl(LOG_DEBUG "Blacklist address %02x\n", blacklist);
+
+    for (int i = 0; blacklist[i] != NULL; i++) {
+        host = blacklist[i];
+        if (!strcmp(req->url->host, host) || !strcmp(req->url->ip, host))
+            return true;
+    }
+
+    printl(LOG_DEBUG "Blacklist address %02x\n", blacklist);
+
+    return false;
 }
