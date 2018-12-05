@@ -66,11 +66,13 @@ char *status_string(int status, char *buf, size_t buflen);
 static inline bool response_ok(const response_t *res)
 {
     const char expected_code[] = "200";
-    char actual_code[3];
+    char ver[9] = { 0 };
+    char actual_code[4] = { 0 };
+    char desc[3] = { 0 };
 
-    sscanf(res->header.status_line, "%3s", actual_code);
+    sscanf(res->header.status_line, "%8s %3s %2s", ver, actual_code, desc);
 
-    return strncmp(expected_code, actual_code, 3);
+    return strncmp(expected_code, actual_code, 3) == 0;
 }
 
 /* Return value of Content-Length header field or 0. */
