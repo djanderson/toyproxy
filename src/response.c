@@ -142,6 +142,8 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
     size_t header_len, expected_content_len, actual_content_len;
     int id = res->thread_id;
 
+    printl(LOG_TRACE "Deserializing buffer: %s\n", buf);
+
     /* Copy response into raw buffer */
     res->raw = realloc(res->raw, res->raw_len + buflen + 1);
     memcpy(res->raw + res->raw_len, buf, buflen);
@@ -213,18 +215,27 @@ int response_deserialize(response_t* res, char* buf, size_t buflen)
 
     /* Check if all content received */
     if (res->header.complete) {
-        expected_content_len = 0;
-        hashmap_get(&res->header.fields, "Content-Length", &clen);
-        if (clen != NULL) {
-            expected_content_len = atoi(clen);
-            free(clen);
-        }
-
         res->content = res->raw + res->content_offset;
-        header_len = res->content - res->raw;
-        actual_content_len = res->raw_len - header_len;
-        if (actual_content_len == expected_content_len)
-            res->complete = true;
+
+        if (response_chunked(res)) {
+            /* Look for terminating "\r\n0\r\n\r\n" */
+            /* FIXME: there may still be trailers - but ignoring for now */
+            if (strstr(res->raw + res->content_offset, "\r\n0\r\n\r\n"))
+                res->complete = true;
+        } else {
+            /* Non-chunked content */
+            expected_content_len = 0;
+            hashmap_get(&res->header.fields, "Content-Length", &clen);
+            if (clen != NULL) {
+                expected_content_len = atoi(clen);
+                free(clen);
+            }
+
+            header_len = res->content - res->raw;
+            actual_content_len = res->raw_len - header_len;
+            if (actual_content_len == expected_content_len)
+                res->complete = true;
+        }
     }
 
     return nunparsed;

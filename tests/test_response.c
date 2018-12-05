@@ -4,7 +4,7 @@
 
 
 response_t res;
-char test_raw_response[181];
+char test_raw_response[206];
 
 const int response_length = 180;
 const char raw_response[] =
@@ -17,10 +17,26 @@ const char raw_response[] =
     "\r\n"
     "<html><body><h1>Test</h1></body></html>";
 
+const int chunked_response_length = 205;
+const char chunked_raw_response[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Date: Tue, 13 Nov 2018 05:01:00 GMT\r\n"
+    "Server: Apache\r\n"
+    "Connection: Keep-Alive\r\n"
+    "Transfer-Encoding: chunked\r\n"
+    "Content-Type: text/html\r\n"
+    "\r\n"
+    "14\r\n"
+    "<html><body><h1>Test\r\n"
+    "13\r\n"
+    "</h1></body></html>\r\n"
+    "0\r\n"
+    "\r\n";
+
 
 void setUp()
 {
-    memset(test_raw_response, 0, 181);
+    memset(test_raw_response, 0, sizeof(test_raw_response));
     response_init(&res);
 }
 
@@ -65,6 +81,58 @@ static void verify_response()
 }
 
 
+static void verify_chunked_response()
+{
+    char *date, *server, *tenc, *conn, *ctype;
+
+    TEST_ASSERT_TRUE_MESSAGE(res.header.complete, "Header not complete");
+    TEST_ASSERT_EQUAL_STRING("HTTP/1.1 200 OK", res.header.status_line);
+
+    hashmap_get(&res.header.fields, "Date", &date);
+    TEST_ASSERT_EQUAL_STRING("Tue, 13 Nov 2018 05:01:00 GMT", date);
+    free(date);
+
+    hashmap_get(&res.header.fields, "Server", &server);
+    TEST_ASSERT_EQUAL_STRING("Apache", server);
+    free(server);
+
+    hashmap_get(&res.header.fields, "Transfer-Encoding", &tenc);
+    TEST_ASSERT_EQUAL_STRING("chunked", tenc);
+    free(tenc);
+
+    hashmap_get(&res.header.fields, "Connection", &conn);
+    TEST_ASSERT_EQUAL_STRING("Keep-Alive", conn);
+    free(conn);
+
+    hashmap_get(&res.header.fields, "Content-Type", &ctype);
+    TEST_ASSERT_EQUAL_STRING("text/html", ctype);
+    free(ctype);
+
+    TEST_ASSERT_TRUE_MESSAGE(res.complete, "Response not complete");
+    TEST_ASSERT_EQUAL_STRING(chunked_raw_response, res.raw);
+    TEST_ASSERT_EQUAL_STRING("14\r\n<html><body><h1>Test\r\n13\r\n</h1></body>"
+                             "</html>\r\n0\r\n\r\n", res.content);
+}
+
+
+/* Test the response_ok helper function. */
+void test_response_ok()
+{
+    strcpy(test_raw_response, raw_response);
+    response_deserialize(&res, test_raw_response, response_length);
+    TEST_ASSERT_TRUE(response_ok(&res));
+}
+
+
+/* Test the response_chunked helper function. */
+void test_response_chunked()
+{
+    strcpy(test_raw_response, chunked_raw_response);
+    response_deserialize(&res, test_raw_response, response_length);
+    TEST_ASSERT_TRUE(response_chunked(&res));
+}
+
+
 /* Test that all information is parsed when full message is passed at once. */
 void test_response_deserialize_whole()
 {
@@ -77,12 +145,16 @@ void test_response_deserialize_whole()
 }
 
 
-/* Test the response_ok helper function. */
-void test_response_ok()
+/* Test that all information is parsed when full message is passed at once. */
+void test_response_deserialize_whole_chunked()
 {
-    strcpy(test_raw_response, raw_response);
-    response_deserialize(&res, test_raw_response, response_length);
-    TEST_ASSERT_TRUE(response_ok(&res));
+    int nunparsed;
+
+    strcpy(test_raw_response, chunked_raw_response);
+    nunparsed = response_deserialize(&res, test_raw_response,
+                                     chunked_response_length);
+    TEST_ASSERT_EQUAL_INT(0, nunparsed);
+    verify_chunked_response();
 }
 
 
@@ -168,8 +240,10 @@ int main()
 {
     UNITY_BEGIN();
 
-    RUN_TEST(test_response_deserialize_whole);
     RUN_TEST(test_response_ok);
+    RUN_TEST(test_response_chunked);
+    RUN_TEST(test_response_deserialize_whole);
+    RUN_TEST(test_response_deserialize_whole_chunked);
     RUN_TEST(test_split_response_partial_header_line);
     RUN_TEST(test_split_response_full_header_line);
     RUN_TEST(test_split_response_complete_header);

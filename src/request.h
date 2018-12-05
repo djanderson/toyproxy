@@ -18,7 +18,7 @@ typedef struct request {
     int server_fd;              /* fd of the server socket */
     int thread_id;              /* id of thread handling request */
     char *raw;                  /* raw request buffer */
-    size_t raw_len;             /*  */
+    size_t raw_len;             /* bytes in the raw buffer */
     size_t raw_buffer_sz;       /* size of the raw buffer */
     char ip[INET_ADDRSTRLEN];   /* ip address of the server */
     char *method;               /* request method (e.g., GET) */

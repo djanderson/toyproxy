@@ -91,4 +91,20 @@ static inline size_t response_content_length(response_t *res)
     return len;
 }
 
+/* Return true if response Transfer-Encoding is "chunked", else false. */
+static inline bool response_chunked(response_t *res)
+{
+    bool is_chunked;
+    char *tenc;
+
+    if (hashmap_get(&res->header.fields, "Transfer-Encoding", &tenc) == -1)
+        return false;
+
+    is_chunked = strcmp(tenc, "chunked") == 0;
+
+    free(tenc);
+
+    return is_chunked;
+}
+
 #endif  /* RESPONSE_H */
