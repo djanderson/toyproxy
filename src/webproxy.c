@@ -434,6 +434,7 @@ int send_cache_file(request_t *req, char *path)
     response_init_from_request(req, &res, 200, ctype, clen);
     response_serialize(&res, &resbuf, &resbuflen);
     ntotal += write(req->client_fd, resbuf, resbuflen);
+    free(resbuf);
 
     printl("-> %s 200 %s %s (%lu)\n", req->ip, path, ctype, clen);
 
@@ -468,6 +469,7 @@ int send_error(request_t *req, int status)
         printl(msg, id, strerror(errno));
     }
 
+    free(resbuf);
     response_destroy(&res);
     return nsent;
 }

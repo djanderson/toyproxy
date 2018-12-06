@@ -55,7 +55,6 @@ int request_deserialize(request_t *req, char *buf, size_t buflen)
     char *orig_buf = buf;
     char *saveptr;
     const char delim[] = "\r\n";
-    int id = req->thread_id;
 
     /* Copy request into raw buffer */
     req->raw = realloc(req->raw, req->raw_len + buflen + 1);
@@ -143,6 +142,7 @@ int request_lookup_host(request_t *req)
         msg = LOG_DEBUG "[%d] Host %s -> %s - cache hit\n";
         printl(msg, id, req->url->host, ip);
         req->url->ip = strdup(ip);
+        free(ip);
         return 1;
     }
 
@@ -164,19 +164,17 @@ int request_lookup_host(request_t *req)
 
 void request_init(request_t *req, int fd, const struct sockaddr_in *addr)
 {
-    char *ip =  malloc(INET_ADDRSTRLEN);
-
     memset(req, 0, sizeof(request_t));
-    inet_ntop(AF_INET, &(addr->sin_addr), ip, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(addr->sin_addr), req->ip, INET_ADDRSTRLEN);
     req->client_fd = fd;
-    memcpy(req->ip, ip, INET_ADDRSTRLEN);
-    req->url = malloc(sizeof(url_t));
-    memset(req->url, 0, sizeof(url_t));
+    req->url = calloc(1, sizeof(url_t));
 }
 
 
 void request_destroy(request_t *req)
 {
+    if (req->raw)
+        free(req->raw);
     if (req->method)
         free(req->method);
     if (req->http_version)
