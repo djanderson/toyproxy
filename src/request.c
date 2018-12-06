@@ -152,7 +152,7 @@ int request_lookup_host(request_t *req)
         return -1;
     }
 
-    ip = inet_ntoa(*(struct in_addr *) hostinfo->h_addr);
+    ip = inet_ntoa(*(struct in_addr *)hostinfo->h_addr);
     msg = LOG_DEBUG "[%d] Host lookup %s -> %s - cache miss\n";
     printl(msg, id, req->url->host, ip);
     hashmap_add(&hostname_cache, req->url->host, ip);

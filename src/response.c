@@ -118,7 +118,7 @@ int response_serialize(response_t *res, char **buf, size_t *buflen)
         /* Out of memory */
         msg = LOG_ERR "[%d] Error serializing response - %s\n";
         printl(msg, id, strerror(errno));
-        *buf = (char *) error_500;
+        *buf = (char *)error_500;
         *buflen = strlen(error_500);
         rval = -1;
     }

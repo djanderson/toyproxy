@@ -40,10 +40,10 @@ static inline int hashmap_entry_init(hashmap_entry_t *entry,
 static inline void hashmap_entry_destroy(hashmap_entry_t *entry)
 {
     assert(entry->key != NULL);
-    free((char *) entry->key);
+    free((char *)entry->key);
 
     assert(entry->value != NULL);
-    free((char *) entry->value);
+    free((char *)entry->value);
 }
 
 
@@ -112,7 +112,7 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
 
     bool entry_exists = false;
     hashmap_entry_t *last_entry, *entry;
-    hash_t key_hash = hash((unsigned char *) key);
+    hash_t key_hash = hash((unsigned char *)key);
     int idx = key_hash % map->bucket_size;
 
     last_entry = entry = map->bucket[idx];
@@ -132,7 +132,7 @@ int hashmap_add(hashmap_t *map, const char *key, const char *value)
     if (entry_exists) {
         /* Update existing entry */
         if (strcmp(entry->value, value)) {
-            free((void *) entry->value);
+            free((void *)entry->value);
             entry->value = strdup(value);
         }
         if (map->timeout)
@@ -166,7 +166,7 @@ int hashmap_get(hashmap_t *map, const char *key, char **value)
     int rval;
     bool entry_exists = false;
     hashmap_entry_t *entry;
-    hash_t key_hash = hash((unsigned char *) key);
+    hash_t key_hash = hash((unsigned char *)key);
     int idx = key_hash % map->bucket_size;
 
     entry = map->bucket[idx];
@@ -207,7 +207,7 @@ int hashmap_del(hashmap_t *map, const char *key)
     int rval = -1;
     bool entry_exists = false;
     hashmap_entry_t *last_entry, *entry;
-    hash_t key_hash = hash((unsigned char *) key);
+    hash_t key_hash = hash((unsigned char *)key);
     int idx = key_hash % map->bucket_size;
 
     last_entry = entry = map->bucket[idx];

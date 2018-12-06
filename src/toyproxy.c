@@ -102,13 +102,11 @@ int main(int argc, char *argv[])
     file_cache.timeout = cache_timeout;
     file_cache.unlinker = unlink;       /* unlink cached files on timeout */
 
-    if (stat(CACHE_ROOT, &st) == -1) {
+    if (stat(CACHE_ROOT, &st) == -1)
         mkdir(CACHE_ROOT, DIR_PERMS);
-    }
 
     /* Spawn cache timeout handler */
-    if (pthread_create(&cache_gc_thread, NULL, cache_gc,
-                       (void *)&file_cache) < 0) {
+    if (pthread_create(&cache_gc_thread, NULL, cache_gc, &file_cache) < 0) {
         printl(LOG_ERR "pthread_create - %s\n", strerror(errno));
         hashmap_destroy(&hostname_cache);
         hashmap_destroy(&file_cache);
@@ -135,7 +133,6 @@ int main(int argc, char *argv[])
     printl(LOG_INFO "Toyproxy started on port %d\n", port);
     rval = proxy(ssock);
 
-    /* Wait for worker threads to exit */
     printl(LOG_INFO "Exiting...\n");
     pthread_join(cache_gc_thread, NULL);
 
@@ -210,12 +207,12 @@ void *handle_connection(void *cfd_vptr)
     char cache_dir[REQ_BUFLEN] = "";
     fd_set readfds_master, readfds;
     bool keepalive;
-    request_t req = {0};
-    response_t res = {0};
-    struct stat st = {0};
+    request_t req = { 0 };
+    response_t res = { 0 };
+    struct stat st = { 0 };
     struct sockaddr_in client_addr;
     struct sockaddr_in server_addr;
-    struct sockaddr_in current_server_addr = {0}; /* open sock addr */
+    struct sockaddr_in current_server_addr = { 0 }; /* open sock addr */
     const struct timespec one_second = { .tv_sec = 1, .tv_nsec = 0 };
     socklen_t addr_sz = sizeof(struct sockaddr_in);
     int id = thread_id = global_thread_count++;
@@ -269,7 +266,7 @@ void *handle_connection(void *cfd_vptr)
             break;
         }
 
-        if (hashmap_get(&file_cache, req.url->full, (char **) &path) != -1) {
+        if (hashmap_get(&file_cache, req.url->full, (char **)&path) != -1) {
             printl(LOG_DEBUG "[%d] Cache hit: %s\n", id, path);
             rval = send_cache_file(&req, path);
             free(path);
@@ -568,7 +565,7 @@ void parse_options(int argc, char *argv[], int *port, int *cache_timeout)
 
 void *cache_gc(void *cache_vptr)
 {
-    hashmap_t *cache = (hashmap_t *) cache_vptr;
+    hashmap_t *cache = (hashmap_t *)cache_vptr;
     unsigned int clk = 0;
     int id = thread_id = global_thread_count++;
 

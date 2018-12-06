@@ -184,8 +184,8 @@ void test_hashmap_unlinker()
     hashmap_init(&map, 10);
 
     /* "Touch" a temp file like test_hashmap_1542079712 */
-    sprintf((char *) fpath, fpath_fmt, (unsigned long) time(NULL));
-    fname = (const char *) fpath;
+    sprintf((char *)fpath, fpath_fmt, (unsigned long) time(NULL));
+    fname = (const char *)fpath;
     file = fopen(fname, "w+");
     TEST_ASSERT_NOT_NULL_MESSAGE(file, strerror(errno));
 
