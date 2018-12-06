@@ -1,0 +1,12 @@
+language: c
+
+dist: bionic
+
+compiler: gcc
+
+script:
+  - mkdir build
+  - cd build
+  - cmake ../
+  - make
+  - ctest -V

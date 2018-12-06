@@ -8,7 +8,7 @@ set(MAIN_SOURCES
   request.c
   response.c
   url.c
-  webproxy.c
+  toyproxy.c
 )
 
 set(HEADERS
@@ -20,7 +20,7 @@ set(HEADERS
   url.h
 )
 
-add_executable(webproxy ${HEADERS} ${MAIN_SOURCES})
-target_link_libraries(webproxy Threads::Threads)
+add_executable(toyproxy ${HEADERS} ${MAIN_SOURCES})
+target_link_libraries(toyproxy Threads::Threads)
 
-install(TARGETS webproxy DESTINATION bin)
+install(TARGETS toyproxy DESTINATION bin)

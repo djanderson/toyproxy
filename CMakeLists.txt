@@ -1,4 +1,4 @@
-project(webproxy C)
+project(toyproxy C)
 
 cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -14,6 +14,6 @@ add_subdirectory(src)
 add_subdirectory(vendor)
 add_subdirectory(tests)
 
-# Hack - copy to both directories instead of finding absolute path in webproxy
+# Hack - copy to both directories instead of finding absolute path in toyproxy
 file(COPY blacklist.txt DESTINATION "${CMAKE_BINARY_DIR}")
 file(COPY blacklist.txt DESTINATION "${CMAKE_BINARY_DIR}/src")

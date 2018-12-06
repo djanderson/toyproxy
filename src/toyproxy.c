@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
         printl(LOG_ERR "Failed to load blacklist from %s\n", BLACKLIST_FILE);
 
     /* Serve until terminated */
-    printl(LOG_INFO "Webproxy started on port %d\n", port);
+    printl(LOG_INFO "Toyproxy started on port %d\n", port);
     rval = proxy(ssock);
 
     /* Wait for worker threads to exit */

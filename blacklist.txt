@@ -1,3 +1,6 @@
+# List hosts and IPs to blacklist.
+# Lines starting with `#' and blank lines are ignored.
+
 www.kernel.org
 
 # beej.us (Beej's Guide to Network Programming)
