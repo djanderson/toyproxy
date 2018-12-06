@@ -7,7 +7,7 @@
 #include <pthread.h>            /* pthread_* */
 #include <signal.h>             /* sigset_t, sigaction */
 #include <stdatomic.h>          /* atomic_ */
-#include <stdlib.h>             /* size_t */
+#include <stdlib.h>             /* size_t, strtoul */
 #include <string.h>             /* memset */
 #include <stdio.h>              /* printf, fprintf */
 #include <sys/socket.h>         /* setsockopt */
@@ -606,8 +606,9 @@ char *url_to_cache_path(const url_t *url)
 
 void save_cache_file(response_t *res, char *path)
 {
-    size_t content_length;
-    char *msg;
+    size_t content_length, chunk_length;
+    char *msg, *chunk_end;
+    const char *chunk_start;
     FILE *file;
     int id = thread_id;
 
@@ -617,11 +618,28 @@ void save_cache_file(response_t *res, char *path)
         return;
     }
 
-    content_length = response_content_length(res);
+    if (response_chunked(res)) {
+        /* Response specified Transfer-Encoding: chunked */
+        chunk_start = res->content;
+        while ((chunk_length = strtoul(chunk_start, &chunk_end, 16))) {
+            if (chunk_length == 0)
+                break;
 
-    if (fwrite(res->content, 1, content_length, file) != content_length) {
-        msg = LOG_WARN "[%d] Failed to write to %s - %s";
-        printl(msg, id, path, strerror(errno));
+            chunk_start = chunk_end + 2; /* step over length and \r\n */
+
+            if (fwrite(chunk_start, 1, chunk_length, file) != chunk_length) {
+                msg = LOG_WARN "[%d] Failed to write to %s - %s";
+                printl(msg, id, path, strerror(errno));
+            }
+        }
+    } else {
+        /* Response specified Content-Length: xxx */
+        content_length = response_content_length(res);
+
+        if (fwrite(res->content, 1, content_length, file) != content_length) {
+            msg = LOG_WARN "[%d] Failed to write to %s - %s";
+            printl(msg, id, path, strerror(errno));
+        }
     }
 
     fclose(file);
