@@ -12,7 +12,7 @@
 
 
 const char response_date_fmt[] = "%a, %d %b %Y %H:%M:%S %Z";
-const char response_server[] = "webproxy";
+const char response_server[] = "toyproxy";
 const char response_version_1_0[] = "HTTP/1.0";
 const char response_version_1_1[] = "HTTP/1.1";
 const char response_success_200[] = "200 Success";

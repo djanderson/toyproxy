@@ -85,7 +85,7 @@ void test_url_invalid_path()
 }
 
 
-/* NOTE: webproxy only supports http, but this test can be removed later */
+/* NOTE: toyproxy only supports http, but this test can be removed later */
 void test_url_scheme_not_http()
 {
     int rval = url_init(&url, "https://example.com");
