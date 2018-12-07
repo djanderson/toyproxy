@@ -684,7 +684,8 @@ int blacklist_init()
             printl(LOG_DEBUG "[%d] Resizing blacklist array %d -> %d\n", id,
                    blacklist_buffer_sz, blacklist_buffer_sz + 10);
             blacklist_buffer_sz += 10;
-            blacklist = realloc(blacklist, blacklist_buffer_sz);
+            blacklist = realloc(blacklist,
+                                blacklist_buffer_sz * sizeof(char *));
         }
     }
 
