@@ -81,21 +81,22 @@ void hashmap_destroy(hashmap_t *map)
     if (map == NULL || map->bucket == NULL)
         return;
 
-    /* free entries */
+    /* Free entries */
     for (size_t i = 0; i < map->bucket_size; i++) {
-        if (map->bucket[i] != NULL) {
-            current = map->bucket[i];
-            do {
-                next = current->next;
-                if (map->unlinker) {
-                    printl(LOG_DEBUG "Unlinking %s\n", current->value);
-                    map->unlinker(current->value);
-                }
-                hashmap_entry_destroy(current);
-                free(current);
-                current = next;
-            } while (next != NULL);
-        }
+        current = map->bucket[i];
+        if (current == NULL)
+            continue;
+
+        do {
+            next = current->next;
+            if (map->unlinker) {
+                printl(LOG_DEBUG "Unlinking %s\n", current->value);
+                map->unlinker(current->value);
+            }
+            hashmap_entry_destroy(current);
+            free(current);
+            current = next;
+        } while (next != NULL);
     }
 
     free(map->bucket);
@@ -258,17 +259,15 @@ void hashmap_gc(hashmap_t *map)
 
     pthread_mutex_lock(&map->lock);
 
-    timeout = map->timeout;
-
-    if (!timeout)               /* noop */
-        return;
-
-    for (size_t i = 0; i < map->bucket_size; i++) {
-        if (map->bucket[i] != NULL) {
+    if (map->timeout) {
+        for (size_t i = 0; i < map->bucket_size; i++) {
             current = map->bucket[i];
+            if (current == NULL)
+                continue;
+
             do {
                 next = current->next;
-                if (now - current->timestamp > timeout) {
+                if (now - current->timestamp > map->timeout) {
                     printl(msg, current->key);
                     hashmap_del(map, current->key);
                 }
